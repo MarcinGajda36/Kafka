@@ -3,6 +3,7 @@
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
+    <nullable>enable</nullable>
     <Version>1.0.1</Version>
     <Description>Helper to read from Kafka that allows for parallelism</Description>
     <Copyright>MIT</Copyright>

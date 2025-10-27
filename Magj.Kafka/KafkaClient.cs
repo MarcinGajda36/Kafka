@@ -22,7 +22,7 @@ public sealed record AtLeastOnceSettings(
     /// <summary>
     /// Amount of messages that can wait in memory for processing.
     /// Can be increased for potential perf improvements, or decreased to consume less memory.
-    /// 4096 by default. -1 for unbounded.
+    /// 4096 by default. -1 for unbounded. 
     /// </summary>
     public int MaxBufferedMessages { get; init; } = 4096;
 
