@@ -22,7 +22,7 @@ public sealed partial class KafkaClient
         public int MaxDegreeOfParallelism { get; init; } = 1;
 
         /// <summary>
-        /// Ammount of messages that can wait in memory for processing.
+        /// Amount of messages that can wait in memory for processing.
         /// Can be increased for potential perf improvements, or decreased to consume less memory.
         /// 4096 by default. -1 for unbounded.
         /// </summary>
@@ -34,7 +34,7 @@ public sealed partial class KafkaClient
         public TimeSpan ConsumeTimeout { get; init; } = TimeSpan.FromSeconds(1);
 
         /// <summary>
-        /// Scheduler used for recieving kafka messages and storing their offset after processing. 
+        /// Scheduler used for receiving kafka messages and storing their offset after processing. 
         /// Leaving default is recommended.
         /// TaskScheduler.Default is default.
         /// </summary>
@@ -48,7 +48,7 @@ public sealed partial class KafkaClient
 
         /// <summary>
         /// Logger used to log Exceptions.
-        /// Fatal kafka exception and Unhandled processor exceptions are still causing throw, so i may not be necesary to asign this.
+        /// Fatal kafka exception and Unhandled processor exceptions are still causing throw, so i may not be necessary to assign this.
         /// NullLogger.Instance by default.
         /// </summary>
         public ILogger Logger { get; init; } = NullLogger.Instance;
