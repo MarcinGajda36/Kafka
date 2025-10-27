@@ -27,8 +27,8 @@ public sealed partial class KafkaClient
         Func<ConsumeResult<TKey, TValue>, CancellationToken, ValueTask> processor,
         CancellationToken cancellationToken = default)
     {
+        // TODO: maybe check settings.X in setters
         ArgumentNullException.ThrowIfNull(settings);
-        // TODO: check settings.X in setters
         ArgumentOutOfRangeException.ThrowIfLessThan(settings.MaxDegreeOfParallelism, -1);
         ArgumentOutOfRangeException.ThrowIfLessThan(settings.MaxBufferedMessages, -1);
         ArgumentNullException.ThrowIfNull(settings.ConsumerScheduler);
