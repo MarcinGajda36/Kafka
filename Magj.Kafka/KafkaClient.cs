@@ -7,60 +7,60 @@ using Confluent.Kafka;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
+public sealed record AtLeastOnceSettings(
+    string Topic,
+    string BootstrapServers,
+    string GroupId)
+{
+    /// <summary>
+    /// Number of times processor function can be called in parallel.
+    /// Only change above 1 it if processing multiple messages at the same time is safe.
+    /// 1 by default. -1 for unbounded. 
+    /// </summary>
+    public int MaxDegreeOfParallelism { get; init; } = 1;
+
+    /// <summary>
+    /// Amount of messages that can wait in memory for processing.
+    /// Can be increased for potential perf improvements, or decreased to consume less memory.
+    /// 4096 by default. -1 for unbounded.
+    /// </summary>
+    public int MaxBufferedMessages { get; init; } = 4096;
+
+    /// <summary>
+    /// How long we wait for message before we loop and try again.
+    /// </summary>
+    public TimeSpan ConsumeTimeout { get; init; } = TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// Scheduler used for receiving kafka messages and storing their offset after processing. 
+    /// Leaving default is recommended.
+    /// TaskScheduler.Default is default.
+    /// </summary>
+    public TaskScheduler ConsumerScheduler { get; init; } = TaskScheduler.Default;
+
+    /// <summary>
+    /// Scheduler used for processing kafka messages.
+    /// TaskScheduler.Default is default.
+    /// </summary>
+    public TaskScheduler ProcessorScheduler { get; init; } = TaskScheduler.Default;
+
+    /// <summary>
+    /// Logger used to log Exceptions.
+    /// Fatal kafka exception and Unhandled processor exceptions are still causing throw, so i may not be necessary to assign this.
+    /// NullLogger.Instance by default.
+    /// </summary>
+    public ILogger Logger { get; init; } = NullLogger.Instance;
+}
+
 public sealed partial class KafkaClient
 {
-    public sealed record Settings(
-        string Topic,
-        string BootstrapServers,
-        string GroupId)
-    {
-        /// <summary>
-        /// Number of times processor function can be called in parallel.
-        /// Only change above 1 it if processing multiple messages at the same time is safe.
-        /// 1 by default. -1 for unbounded. 
-        /// </summary>
-        public int MaxDegreeOfParallelism { get; init; } = 1;
-
-        /// <summary>
-        /// Amount of messages that can wait in memory for processing.
-        /// Can be increased for potential perf improvements, or decreased to consume less memory.
-        /// 4096 by default. -1 for unbounded.
-        /// </summary>
-        public int MaxBufferedMessages { get; init; } = 4096;
-
-        /// <summary>
-        /// How long we wait for message before we loop and try again.
-        /// </summary>
-        public TimeSpan ConsumeTimeout { get; init; } = TimeSpan.FromSeconds(1);
-
-        /// <summary>
-        /// Scheduler used for receiving kafka messages and storing their offset after processing. 
-        /// Leaving default is recommended.
-        /// TaskScheduler.Default is default.
-        /// </summary>
-        public TaskScheduler ConsumerScheduler { get; init; } = TaskScheduler.Default;
-
-        /// <summary>
-        /// Scheduler used for processing kafka messages.
-        /// TaskScheduler.Default is default.
-        /// </summary>
-        public TaskScheduler ProcessorScheduler { get; init; } = TaskScheduler.Default;
-
-        /// <summary>
-        /// Logger used to log Exceptions.
-        /// Fatal kafka exception and Unhandled processor exceptions are still causing throw, so i may not be necessary to assign this.
-        /// NullLogger.Instance by default.
-        /// </summary>
-        public ILogger Logger { get; init; } = NullLogger.Instance;
-    }
-
     public static Task AtLeastOnceAsync<TKey, TValue>(
-        Settings settings,
+        AtLeastOnceSettings settings,
         Func<ConsumeResult<TKey, TValue>, CancellationToken, ValueTask> processor,
         CancellationToken cancellationToken = default)
     {
-        // TODO: maybe check settings.X in setters
         ArgumentNullException.ThrowIfNull(settings);
+        // TODO: maybe check settings.X in setters
         ArgumentOutOfRangeException.ThrowIfLessThan(settings.MaxDegreeOfParallelism, -1);
         ArgumentOutOfRangeException.ThrowIfLessThan(settings.MaxBufferedMessages, -1);
         ArgumentNullException.ThrowIfNull(settings.ConsumerScheduler);
@@ -71,7 +71,7 @@ public sealed partial class KafkaClient
     }
 
     private static async Task AtLeastOnceCore<TKey, TValue>(
-        Settings settings,
+        AtLeastOnceSettings settings,
         Func<ConsumeResult<TKey, TValue>, CancellationToken, ValueTask> processor,
         CancellationToken cancellationToken)
     {
@@ -80,7 +80,7 @@ public sealed partial class KafkaClient
         await ConsumeAsync(client, processor, settings, cancellationToken);
     }
 
-    private static ConsumerConfig AutoOffsetDisabledConfig(Settings kafkaSettings)
+    private static ConsumerConfig AutoOffsetDisabledConfig(AtLeastOnceSettings kafkaSettings)
         => new()
         {
             BootstrapServers = kafkaSettings.BootstrapServers,
@@ -92,7 +92,7 @@ public sealed partial class KafkaClient
     private static async Task ConsumeAsync<TKey, TValue>(
         IConsumer<TKey, TValue> consumer,
         Func<ConsumeResult<TKey, TValue>, CancellationToken, ValueTask> processor,
-        Settings settings,
+        AtLeastOnceSettings settings,
         CancellationToken cancellationToken)
     {
         using var cancellationSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -129,7 +129,7 @@ public sealed partial class KafkaClient
     private static void ConsumeAndProcess<TKey, TValue>(
         IConsumer<TKey, TValue> consumer,
         ProcessAndOffsetProcessor<TKey, TValue> kafkaProcessor,
-        Settings settings,
+        AtLeastOnceSettings settings,
         CancellationToken cancellationToken)
     {
         var logger = settings.Logger;

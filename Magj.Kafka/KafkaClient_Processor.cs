@@ -19,7 +19,7 @@ public partial class KafkaClient
         public ProcessAndOffsetProcessor(
             IConsumer<TKey, TValue> consumer,
             Func<ConsumeResult<TKey, TValue>, CancellationToken, ValueTask> processor,
-            Settings settings,
+            AtLeastOnceSettings settings,
             CancellationToken cancellationToken)
         {
             processingBlock = CreateProcessingBlock(processor, settings, cancellationToken);
@@ -38,7 +38,7 @@ public partial class KafkaClient
 
         private static TransformBlock<ConsumeResult<TKey, TValue>, ConsumeResult<TKey, TValue>> CreateProcessingBlock(
             Func<ConsumeResult<TKey, TValue>, CancellationToken, ValueTask> processor,
-            Settings settings,
+            AtLeastOnceSettings settings,
             CancellationToken cancellationToken)
             => new(
                 async result =>
@@ -68,7 +68,7 @@ public partial class KafkaClient
 
         private static ActionBlock<ConsumeResult<TKey, TValue>> CreateOffsetBlock(
             IConsumer<TKey, TValue> consumer,
-            Settings settings)
+            AtLeastOnceSettings settings)
         {
             var logger = settings.Logger;
             object?[] loggerParams = [settings.Topic, settings.GroupId];
