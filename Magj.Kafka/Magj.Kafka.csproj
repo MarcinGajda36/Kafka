@@ -5,6 +5,8 @@
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
     <Version>1.0.0</Version>
     <Description>Kafka client helper</Description>
+    <Copyright>MIT</Copyright>
+    <PackageProjectUrl>https://github.com/MarcinGajda36/Kafka</PackageProjectUrl>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
