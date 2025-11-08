@@ -5,6 +5,7 @@
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
     <nullable>enable</nullable>
     <Version>1.0.2</Version>
+    <Authors>Marcin Gajda</Authors>
     <Description>Helper to read from Kafka that allows for parallelism</Description>
     <Copyright>MIT</Copyright>
     <PackageProjectUrl>https://github.com/MarcinGajda36/Kafka</PackageProjectUrl>
