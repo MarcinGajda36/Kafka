@@ -1,12 +1,19 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <OutputType>Library</OutputType>
     <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <IsPackable>true</IsPackable>
+    <DebugType>embedded</DebugType>
     <GeneratePackageOnBuild>True</GeneratePackageOnBuild>
-    <nullable>enable</nullable>
-    <Version>1.0.3</Version>
     <Authors>Marcin Gajda</Authors>
-    <Description>Helper to read from Kafka that allows for parallelism</Description>
+    <Description>
+      At least once delivery kafka client, that makes parallel processing easier.
+      Starting point is static method: Magj.Kafka.KafkaClient.AtLeastOnceAsync(...);
+    </Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <Version>1.0.3</Version>
     <Copyright>MIT</Copyright>
     <PackageProjectUrl>https://github.com/MarcinGajda36/Kafka</PackageProjectUrl>
   </PropertyGroup>
