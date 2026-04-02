@@ -1,7 +1,6 @@
 ﻿namespace Magj.Kafka;
 
 using System;
-using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Confluent.Kafka;
@@ -51,7 +50,6 @@ public sealed record AtLeastOnceSettings(
     /// NullLogger.Instance by default.
     /// </summary>
     public ILogger Logger { get; init; } = NullLogger.Instance;
-
 
     /// <summary>
     /// Action to take when there is no initial offset in offset store or the desired offset is out of range.
