@@ -50,8 +50,31 @@ public class ReadExecuteRetire
             using var cancelationTokenSource = CancellationTokenSource.CreateLinkedTokenSource(options.CancellationToken);
             var token = cancelationTokenSource.Token;
 
-            var readOptions = options.Read;
-            var readBlock = new TransformBlock<TTrigger, Message>(async trigger =>
+            var readBlock = CreateReadBlock(read, options.Read, token);
+            var executeBlock = CreateExecuteBlock(execute, options.Execute, token);
+            var retireBlock = CreateRetireBlock(retire, readBlock, options.Retire, token);
+
+            var propagateCompletionOptions = new DataflowLinkOptions { PropagateCompletion = true };
+            using var readToExecuteLink = readBlock.LinkTo(executeBlock, propagateCompletionOptions);
+            using var executeToRetireLink = executeBlock.LinkTo(retireBlock, propagateCompletionOptions);
+
+            var feed = FeedReadsAsync(triggers, readBlock, token);
+            var reads = readBlock.Completion;
+            var excecutes = executeBlock.Completion;
+            var retires = retireBlock.Completion;
+
+            var firstToFinish = await Task.WhenAny(feed, reads, excecutes, retires);
+            await cancelationTokenSource.CancelAsync();
+            await Task.WhenAll(firstToFinish, feed, reads, excecutes, retires);
+        }
+    }
+
+    private static TransformBlock<TTrigger, Message> CreateReadBlock<TTrigger, TRead>(
+        Func<TTrigger, CancellationToken, ValueTask<TRead>> read,
+        SingleStepOptions readOptions,
+        CancellationToken token)
+        => new(
+            async trigger =>
             {
                 try
                 {
@@ -73,8 +96,12 @@ public class ReadExecuteRetire
                 TaskScheduler = readOptions.TaskScheduler,
             });
 
-            var executeOptions = options.Execute;
-            var executeBlock = new TransformBlock<Message, Message>(message =>
+    private static TransformBlock<Message, Message> CreateExecuteBlock<TTrigger, TRead, TExecute>(
+        Func<TTrigger, TRead, CancellationToken, ValueTask<TExecute>> execute,
+        SingleStepOptions executeOptions,
+        CancellationToken token)
+        => new(
+            message =>
             {
                 return message switch
                 {
@@ -109,8 +136,13 @@ public class ReadExecuteRetire
                 TaskScheduler = executeOptions.TaskScheduler,
             });
 
-            var retireOptions = options.Retire;
-            var retireBlock = new ActionBlock<Message>(message =>
+    private static ActionBlock<Message> CreateRetireBlock<TTrigger, TExecute>(
+        Func<TTrigger, TExecute, CancellationToken, ValueTask> retire,
+        TransformBlock<TTrigger, Message> readBlock,
+        SingleStepOptions retireOptions,
+        CancellationToken token)
+        => new(
+            message =>
             {
                 return message switch
                 {
@@ -153,21 +185,6 @@ public class ReadExecuteRetire
                 MaxDegreeOfParallelism = retireOptions.MaxDegreeOfParallelism,
                 TaskScheduler = retireOptions.TaskScheduler,
             });
-
-            var propagateCompletionOptions = new DataflowLinkOptions { PropagateCompletion = true };
-            using var readToExecuteLink = readBlock.LinkTo(executeBlock, propagateCompletionOptions);
-            using var executeToRetireLink = executeBlock.LinkTo(retireBlock, propagateCompletionOptions);
-
-            var feed = FeedReadsAsync(triggers, readBlock, token);
-            var reads = readBlock.Completion;
-            var excecutes = executeBlock.Completion;
-            var retires = retireBlock.Completion;
-
-            var firstToFinish = await Task.WhenAny(feed, reads, excecutes, retires);
-            await cancelationTokenSource.CancelAsync();
-            await Task.WhenAll(firstToFinish, feed, reads, excecutes, retires);
-        }
-    }
 
     private static async Task FeedReadsAsync<TTrigger>(
         IAsyncEnumerable<TTrigger> triggers,
