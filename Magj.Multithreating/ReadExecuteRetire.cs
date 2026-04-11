@@ -26,7 +26,7 @@ public class ReadExecuteRetire
     private sealed record ValueMessage<TTrigger, TValue>(TTrigger Trigger, TValue Value) : Message;
     private sealed record ExceptionMessage(Exception Exception) : Message;
 
-    public static Task Create<TTrigger, TRead, TExecute>(
+    public static Task CreateAsync<TTrigger, TRead, TExecute>(
         IAsyncEnumerable<TTrigger> triggers,
         Func<TTrigger, CancellationToken, ValueTask<TRead>> read,
         Func<TTrigger, TRead, CancellationToken, ValueTask<TExecute>> execute,
@@ -198,6 +198,7 @@ public class ReadExecuteRetire
                 return;
             }
         }
+        // TODO i need to plass like a Done message and wait for it to retire to know we can be done
     }
 }
 
