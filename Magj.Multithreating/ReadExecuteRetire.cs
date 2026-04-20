@@ -147,7 +147,7 @@ public class ReadExecuteRetire
                     {
                         return;
                     }
-
+                    // TODO: float exception with TaskCompletionSource to avoid AgregateExe(AgregateExe(AgregateExe(...)));
                     switch (message)
                     {
                         case ValueMessage<TTrigger, TExecute>(var trigger, var execute):
