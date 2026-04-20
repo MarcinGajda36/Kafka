@@ -23,7 +23,12 @@ public class ReadExecuteRetire
     }
 
     private abstract record Message;
+    private sealed record TriggerMessage<TTrigger>(TTrigger Trigger) : Message;
     private sealed record ValueMessage<TTrigger, TValue>(TTrigger Trigger, TValue Value) : Message;
+    private sealed record DoneMessage() : Message
+    {
+        public static readonly DoneMessage Instance = new();
+    }
     private sealed record ExceptionMessage(Exception Exception) : Message;
 
     public static Task CreateAsync<TTrigger, TRead, TExecute>(
@@ -59,30 +64,30 @@ public class ReadExecuteRetire
             using var executeToRetireLink = executeBlock.LinkTo(retireBlock, propagateCompletionOptions);
 
             var feed = FeedReadsAsync(triggers, readBlock, token);
-            var reads = readBlock.Completion;
-            var excecutes = executeBlock.Completion;
             var retires = retireBlock.Completion;
 
-            var firstToFinish = await Task.WhenAny(feed, reads, excecutes, retires);
+            await retires;
             await cancelationTokenSource.CancelAsync();
-            await Task.WhenAll(firstToFinish, feed, reads, excecutes, retires);
+            await Task.WhenAll(retires, executeBlock.Completion, readBlock.Completion, feed);
         }
     }
 
-    private static TransformBlock<TTrigger, Message> CreateReadBlock<TTrigger, TRead>(
+    private static TransformBlock<Message, Message> CreateReadBlock<TTrigger, TRead>(
         Func<TTrigger, CancellationToken, ValueTask<TRead>> read,
         SingleStepOptions readOptions,
         CancellationToken token)
         => new(
-            async trigger =>
+            async message =>
             {
                 try
                 {
-                    return token.IsCancellationRequested
-                        ? new ExceptionMessage(new OperationCanceledException(token))
-                        : new ValueMessage<TTrigger, TRead>(
-                            trigger,
-                            await read(trigger, token));
+                    return message switch
+                    {
+                        TriggerMessage<TTrigger>(var trigger)
+                            => new ValueMessage<TTrigger, TRead>(trigger, await read(trigger, token)),
+                        var otherMessage
+                            => otherMessage,
+                    };
                 }
                 catch (Exception exception)
                 {
@@ -94,6 +99,7 @@ public class ReadExecuteRetire
                 BoundedCapacity = readOptions.BoundedCapacity,
                 MaxDegreeOfParallelism = readOptions.MaxDegreeOfParallelism,
                 TaskScheduler = readOptions.TaskScheduler,
+                CancellationToken = token,
             });
 
     private static TransformBlock<Message, Message> CreateExecuteBlock<TTrigger, TRead, TExecute>(
@@ -101,32 +107,21 @@ public class ReadExecuteRetire
         SingleStepOptions executeOptions,
         CancellationToken token)
         => new(
-            message =>
+            async message =>
             {
-                return message switch
+                try
                 {
-                    ValueMessage<TTrigger, TRead>(var trigger, var value) => ExecuteAsync(trigger, value, execute, token),
-                    var otherMessage => Task.FromResult(otherMessage),
-                };
-
-                static async Task<Message> ExecuteAsync(
-                    TTrigger trigger,
-                    TRead read,
-                    Func<TTrigger, TRead, CancellationToken, ValueTask<TExecute>> execute,
-                    CancellationToken token)
+                    return message switch
+                    {
+                        ValueMessage<TTrigger, TRead>(var trigger, var read)
+                            => new ValueMessage<TTrigger, TExecute>(trigger, await execute(trigger, read, token)),
+                        var otherMessage
+                            => otherMessage,
+                    };
+                }
+                catch (Exception exception)
                 {
-                    try
-                    {
-                        return token.IsCancellationRequested
-                            ? new ExceptionMessage(new OperationCanceledException(token))
-                            : new ValueMessage<TTrigger, TExecute>(
-                                trigger,
-                                await execute(trigger, read, token));
-                    }
-                    catch (Exception exception)
-                    {
-                        return new ExceptionMessage(exception);
-                    }
+                    return new ExceptionMessage(exception);
                 }
             },
             new ExecutionDataflowBlockOptions
@@ -138,45 +133,44 @@ public class ReadExecuteRetire
 
     private static ActionBlock<Message> CreateRetireBlock<TTrigger, TExecute>(
         Func<TTrigger, TExecute, CancellationToken, ValueTask> retire,
-        TransformBlock<TTrigger, Message> readBlock,
+        IDataflowBlock readBlock,
         SingleStepOptions retireOptions,
         CancellationToken token)
-        => new(
-            message =>
+    {
+        var isDone = false;
+        return new(
+            async message =>
             {
-                return message switch
+                try
                 {
-                    ValueMessage<TTrigger, TExecute>(var trigger, var value) => RetireAsync(readBlock, trigger, value, retire, token),
-                    ExceptionMessage(var exception) => FaultAsync(readBlock, exception),
-                    var unknown => FaultAsync(readBlock, new ArgumentOutOfRangeException(nameof(message), unknown, "Unrecognized message type"))
-                };
+                    if (isDone)
+                    {
+                        return;
+                    }
 
-                static Task FaultAsync(IDataflowBlock firstBlock, Exception exception)
-                {
-                    firstBlock.Fault(exception);
-                    return Task.FromException(exception);
+                    switch (message)
+                    {
+                        case ValueMessage<TTrigger, TExecute>(var trigger, var execute):
+                            await retire(trigger, execute, token);
+                            break;
+                        case DoneMessage:
+                            readBlock.Complete();
+                            isDone = true;
+                            break;
+                        case ExceptionMessage(var exception):
+                            readBlock.Fault(exception);
+                            isDone = true;
+                            break;
+                        default:
+                            readBlock.Fault(new ArgumentOutOfRangeException(nameof(message), message, "Unrecognized message type"));
+                            isDone = true;
+                            break;
+                    }
                 }
-
-                static async Task RetireAsync(
-                    IDataflowBlock firstBlock,
-                    TTrigger trigger,
-                    TExecute execute,
-                    Func<TTrigger, TExecute, CancellationToken, ValueTask> retire,
-                    CancellationToken token)
+                catch (Exception exception)
                 {
-                    if (token.IsCancellationRequested)
-                    {
-                        await FaultAsync(firstBlock, new OperationCanceledException(token));
-                    }
-
-                    try
-                    {
-                        await retire(trigger, execute, token);
-                    }
-                    catch (Exception exception)
-                    {
-                        await FaultAsync(firstBlock, exception);
-                    }
+                    readBlock.Fault(exception);
+                    isDone = true;
                 }
             },
             new ExecutionDataflowBlockOptions
@@ -185,20 +179,31 @@ public class ReadExecuteRetire
                 MaxDegreeOfParallelism = retireOptions.MaxDegreeOfParallelism,
                 TaskScheduler = retireOptions.TaskScheduler,
             });
+    }
 
     private static async Task FeedReadsAsync<TTrigger>(
         IAsyncEnumerable<TTrigger> triggers,
-        TransformBlock<TTrigger, Message> read,
+        TransformBlock<Message, Message> read,
         CancellationToken token)
     {
-        await foreach (var trigger in triggers.WithCancellation(token))
+        try
         {
-            if ((await read.SendAsync(trigger, token)) is false)
+            await foreach (var trigger in triggers.WithCancellation(token))
             {
-                return;
+                if ((await read.SendAsync(new TriggerMessage<TTrigger>(trigger), token)) is false)
+                {
+                    return;
+                }
             }
         }
-        // TODO i need to plass like a Done message and wait for it to retire to know we can be done
+        catch (Exception exception)
+        {
+            _ = await read.SendAsync(new ExceptionMessage(exception), token);
+        }
+        finally
+        {
+            _ = await read.SendAsync(DoneMessage.Instance, token);
+        }
     }
 }
 
