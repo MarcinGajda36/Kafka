@@ -44,9 +44,9 @@ public class ReadExecuteRetire
         ArgumentNullException.ThrowIfNull(execute);
         ArgumentNullException.ThrowIfNull(retire);
 
-        return Core(triggers, read, execute, retire, options);
+        return CoreAsync(triggers, read, execute, retire, options);
 
-        static async Task Core(
+        static async Task CoreAsync(
             IAsyncEnumerable<TTrigger> triggers,
             Func<TTrigger, CancellationToken, ValueTask<TRead>> read,
             Func<TTrigger, TRead, CancellationToken, ValueTask<TExecute>> execute,
@@ -58,7 +58,10 @@ public class ReadExecuteRetire
 
             var readBlock = CreateReadBlock(read, options.Read, token);
             var executeBlock = CreateExecuteBlock(execute, options.Execute, token);
-            var retireBlock = CreateRetireBlock(retire, readBlock, options.Retire, token);
+
+            var retireCompletionSource = new TaskCompletionSource();
+            using var retireCompletionSourceCancellation = token.Register(static (state, token) => ((TaskCompletionSource)state!).TrySetCanceled(token), retireCompletionSource);
+            var retireBlock = CreateRetireBlock(retire, retireCompletionSource, readBlock, options.Retire, token);
 
             var propagateCompletionOptions = new DataflowLinkOptions { PropagateCompletion = true };
             using var readToExecuteLink = readBlock.LinkTo(executeBlock, propagateCompletionOptions);
@@ -67,9 +70,10 @@ public class ReadExecuteRetire
             var feed = FeedReadsAsync(triggers, readBlock, token);
             var retires = retireBlock.Completion;
 
-            await retires;
-            await cancelationTokenSource.CancelAsync();
-            await Task.WhenAll(retires, executeBlock.Completion, readBlock.Completion, feed);
+            await retires.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            await cancelationTokenSource.CancelAsync().ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            await Task.WhenAll(retires, executeBlock.Completion, readBlock.Completion, feed).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            await retireCompletionSource.Task;
         }
     }
 
@@ -134,6 +138,7 @@ public class ReadExecuteRetire
 
     private static ActionBlock<Message> CreateRetireBlock<TTrigger, TExecute>(
         Func<TTrigger, TExecute, CancellationToken, ValueTask> retire,
+        TaskCompletionSource retireCompletionSource,
         IDataflowBlock readBlock,
         SingleStepOptions retireOptions,
         CancellationToken token)
@@ -148,29 +153,33 @@ public class ReadExecuteRetire
                     {
                         return;
                     }
-                    // TODO: float exception with TaskCompletionSource to avoid AgregateExe(AgregateExe(AgregateExe(...)));
+
                     switch (message)
                     {
                         case ValueMessage<TTrigger, TExecute>(var trigger, var execute):
                             await retire(trigger, execute, token);
                             break;
                         case DoneMessage:
+                            _ = retireCompletionSource.TrySetResult();
                             readBlock.Complete();
                             isDone = true;
                             break;
                         case ExceptionMessage(var exception):
-                            readBlock.Fault(exception);
+                            _ = retireCompletionSource.TrySetException(exception);
+                            readBlock.Complete();
                             isDone = true;
                             break;
                         default:
-                            readBlock.Fault(new ArgumentOutOfRangeException(nameof(message), message, "Unrecognized message type"));
+                            _ = retireCompletionSource.TrySetException(new ArgumentOutOfRangeException(nameof(message), message, "Unrecognized message type"));
+                            readBlock.Complete();
                             isDone = true;
                             break;
                     }
                 }
                 catch (Exception exception)
                 {
-                    readBlock.Fault(exception);
+                    _ = retireCompletionSource.TrySetException(exception);
+                    readBlock.Complete();
                     isDone = true;
                 }
             },
