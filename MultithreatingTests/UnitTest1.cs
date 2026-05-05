@@ -7,13 +7,15 @@ public class Tests
     [Test]
     public async Task Success()
     {
-        static async IAsyncEnumerable<int> GetOne()
+        static async IAsyncEnumerable<int> GetNumbers()
         {
             yield return 1;
+            yield return 2;
+            yield return 3;
         }
 
         Assert.DoesNotThrowAsync(() => ReadExecuteRetire.CreateAsync(
-            GetOne(),
+            GetNumbers(),
             (trigger, token) =>
             {
                 Console.WriteLine("read, {0}", trigger);
@@ -36,7 +38,7 @@ public class Tests
     [Test]
     public async Task FailtOn3()
     {
-        static async IAsyncEnumerable<int> GetOne()
+        static async IAsyncEnumerable<int> GetNumbers()
         {
             yield return 1;
             yield return 2;
@@ -46,7 +48,7 @@ public class Tests
         }
 
         var task = ReadExecuteRetire.CreateAsync(
-            GetOne(),
+            GetNumbers(),
             (trigger, token) =>
             {
                 Console.WriteLine("read, {0}", trigger);
@@ -74,7 +76,7 @@ public class Tests
     [Test]
     public async Task CancelInfinite()
     {
-        static async IAsyncEnumerable<int> GetOne()
+        static async IAsyncEnumerable<int> GetInfinite1()
         {
             while (true)
             {
@@ -84,7 +86,7 @@ public class Tests
 
         using var cancellationTokenSource = new CancellationTokenSource(3);
         var task = ReadExecuteRetire.CreateAsync(
-            GetOne(),
+            GetInfinite1(),
             (trigger, token) =>
             {
                 Console.WriteLine("read, {0}", trigger);
