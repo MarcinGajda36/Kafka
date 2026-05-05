@@ -12,7 +12,7 @@ public class Tests
             yield return 1;
         }
 
-        await ReadExecuteRetire.CreateAsync(
+        Assert.DoesNotThrowAsync(() => ReadExecuteRetire.CreateAsync(
             GetOne(),
             (trigger, token) =>
             {
@@ -29,9 +29,7 @@ public class Tests
                 Console.WriteLine("retire, {0}", fromExecute);
                 return ValueTask.CompletedTask;
             },
-            new());
-
-        Assert.Pass();
+            new()));
     }
 
     class MyException(string message) : Exception(message);
@@ -68,7 +66,7 @@ public class Tests
             },
             new());
 
-        await Task.Delay(100);
-        Assert.ThrowsAsync<MyException>(() => task);
+        await Task.Delay(100); // TODO: do i need it or is it debug leftover? 
+        _ = Assert.ThrowsAsync<MyException>(() => task);
     }
 }
