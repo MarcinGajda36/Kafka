@@ -7,19 +7,45 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Threading.Tasks.Dataflow;
 
-public class ReadExecuteRetire
+public sealed class ReadExecuteRetire
 {
-    public readonly struct SingleStepOptions()
+    public readonly struct ParallelableStepOptions()
     {
         public TaskScheduler TaskScheduler { get; init; } = TaskScheduler.Default;
         public int MaxDegreeOfParallelism { get; init; } = 1;
+
+        /// <summary>
+        /// Maximum number of messages waiting in queue for processing.
+        /// </summary>
         public int BoundedCapacity { get; init; } = 4096;
     }
+
+    public readonly struct RetireStepOptions()
+    {
+        public TaskScheduler TaskScheduler { get; init; } = TaskScheduler.Default;
+        /// <summary>
+        /// Maximum number of messages waiting in queue for processing.
+        /// </summary>
+        public int BoundedCapacity { get; init; } = 4096;
+    }
+
     public readonly struct Options()
     {
-        public SingleStepOptions Read { get; init; } = new();
-        public SingleStepOptions Execute { get; init; } = new();
-        public SingleStepOptions Retire { get; init; } = new();
+        /// <summary>
+        /// Options for how 'read' function will be triggered
+        /// </summary>
+        public ParallelableStepOptions Read { get; init; } = new();
+
+        /// <summary>
+        /// Options for how 'Execute' function will be triggered
+        /// </summary>
+        public ParallelableStepOptions Execute { get; init; } = new();
+
+        /// <summary>
+        /// Options for how 'Retire' function will be triggered. 
+        /// Only 'Retire' function is suppose to produce side-effect, like saving to database.
+        /// </summary>
+        public RetireStepOptions Retire { get; init; } = new();
         public CancellationToken CancellationToken { get; init; } = CancellationToken.None;
     }
 
@@ -32,6 +58,21 @@ public class ReadExecuteRetire
     }
     private sealed record ExceptionMessage(Exception Exception) : Message;
 
+    /// <summary>
+    /// Helper to deal create parallel and order preserving flow.
+    /// The order is preserved only for 'retire' so 'retire' will see messages in exact same order they were triggered, 
+    /// but for example if 'execute' has 'MaxDegreeOfParallelism > 1' then 'execute' can happen out of order. 
+    /// This is intentional as only 'retire' is suppose to produce side-effect like saving to database.
+    /// </summary>
+    /// <typeparam name="TTrigger">Type of messages that will trigger rest of flow and allows for tracking what trigger caused what message.</typeparam>
+    /// <typeparam name="TRead">Result of 'read' function.</typeparam>
+    /// <typeparam name="TExecute">Result of 'execute' function.</typeparam>
+    /// <param name="triggers">Potentially infinite collection of elements to process.</param>
+    /// <param name="read"></param>
+    /// <param name="execute"></param>
+    /// <param name="retire"></param>
+    /// <param name="options"></param>
+    /// <returns>Task that signals completion of all work started by this method. If any step throws unhandled exception then processing stops and this task re-throws that exception.</returns>
     public static Task CreateAsync<TTrigger, TRead, TExecute>(
         IAsyncEnumerable<TTrigger> triggers,
         Func<TTrigger, CancellationToken, ValueTask<TRead>> read,
@@ -79,7 +120,7 @@ public class ReadExecuteRetire
 
     private static TransformBlock<Message, Message> CreateReadBlock<TTrigger, TRead>(
         Func<TTrigger, CancellationToken, ValueTask<TRead>> read,
-        SingleStepOptions readOptions,
+        ParallelableStepOptions readOptions,
         CancellationToken token)
         => new(
             async message =>
@@ -109,7 +150,7 @@ public class ReadExecuteRetire
 
     private static TransformBlock<Message, Message> CreateExecuteBlock<TTrigger, TRead, TExecute>(
         Func<TTrigger, TRead, CancellationToken, ValueTask<TExecute>> execute,
-        SingleStepOptions executeOptions,
+        ParallelableStepOptions executeOptions,
         CancellationToken token)
         => new(
             async message =>
@@ -140,7 +181,7 @@ public class ReadExecuteRetire
         Func<TTrigger, TExecute, CancellationToken, ValueTask> retire,
         TaskCompletionSource retireCompletionSource,
         IDataflowBlock readBlock,
-        SingleStepOptions retireOptions,
+        RetireStepOptions retireOptions,
         CancellationToken token)
     {
         var isDone = false;
@@ -186,7 +227,6 @@ public class ReadExecuteRetire
             new ExecutionDataflowBlockOptions
             {
                 BoundedCapacity = retireOptions.BoundedCapacity,
-                MaxDegreeOfParallelism = retireOptions.MaxDegreeOfParallelism,
                 TaskScheduler = retireOptions.TaskScheduler,
             });
     }
