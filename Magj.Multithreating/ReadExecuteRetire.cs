@@ -102,19 +102,22 @@ public sealed class ReadExecuteRetire
 
             var retireCompletionSource = new TaskCompletionSource();
             using var retireCompletionSourceCancellation = token.Register(static (state, token) => ((TaskCompletionSource)state!).TrySetCanceled(token), retireCompletionSource);
-            var retireBlock = CreateRetireBlock(retire, retireCompletionSource, readBlock, options.Retire, token);
+            var retireBlock = CreateRetireBlock(retire, retireCompletionSource, options.Retire, token);
 
             var propagateCompletionOptions = new DataflowLinkOptions { PropagateCompletion = true };
             using var readToExecuteLink = readBlock.LinkTo(executeBlock, propagateCompletionOptions);
             using var executeToRetireLink = executeBlock.LinkTo(retireBlock, propagateCompletionOptions);
 
             var feed = FeedReadsAsync(triggers, readBlock, token);
-            var retires = retireBlock.Completion;
-
-            await retires.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-            await cancelationTokenSource.CancelAsync().ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-            await Task.WhenAll(retires, executeBlock.Completion, readBlock.Completion, feed).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-            await retireCompletionSource.Task;
+            try
+            {
+                await retireCompletionSource.Task;
+            }
+            finally
+            {
+                await cancelationTokenSource.CancelAsync().ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+                await Task.WhenAll(retireBlock.Completion, executeBlock.Completion, readBlock.Completion, feed).ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            }
         }
     }
 
@@ -175,22 +178,20 @@ public sealed class ReadExecuteRetire
                 BoundedCapacity = executeOptions.BoundedCapacity,
                 MaxDegreeOfParallelism = executeOptions.MaxDegreeOfParallelism,
                 TaskScheduler = executeOptions.TaskScheduler,
+                CancellationToken = token,
             });
 
     private static ActionBlock<Message> CreateRetireBlock<TTrigger, TExecute>(
         Func<TTrigger, TExecute, CancellationToken, ValueTask> retire,
         TaskCompletionSource retireCompletionSource,
-        IDataflowBlock readBlock,
         RetireStepOptions retireOptions,
         CancellationToken token)
-    {
-        var isDone = false;
-        return new(
+        => new(
             async message =>
             {
                 try
                 {
-                    if (isDone)
+                    if (retireCompletionSource.Task.IsCompleted)
                     {
                         return;
                     }
@@ -202,34 +203,26 @@ public sealed class ReadExecuteRetire
                             break;
                         case DoneMessage:
                             _ = retireCompletionSource.TrySetResult();
-                            readBlock.Complete();
-                            isDone = true;
                             break;
                         case ExceptionMessage(var exception):
                             _ = retireCompletionSource.TrySetException(exception);
-                            readBlock.Complete();
-                            isDone = true;
                             break;
                         default:
                             _ = retireCompletionSource.TrySetException(new ArgumentOutOfRangeException(nameof(message), message, "Unrecognized message type"));
-                            readBlock.Complete();
-                            isDone = true;
                             break;
                     }
                 }
                 catch (Exception exception)
                 {
                     _ = retireCompletionSource.TrySetException(exception);
-                    readBlock.Complete();
-                    isDone = true;
                 }
             },
             new ExecutionDataflowBlockOptions
             {
                 BoundedCapacity = retireOptions.BoundedCapacity,
                 TaskScheduler = retireOptions.TaskScheduler,
+                CancellationToken = token
             });
-    }
 
     private static async Task FeedReadsAsync<TTrigger>(
         IAsyncEnumerable<TTrigger> triggers,

@@ -76,17 +76,18 @@ public class Tests
     [Test]
     public async Task CancelInfinite()
     {
-        static async IAsyncEnumerable<int> GetInfinite1()
+        static async IAsyncEnumerable<int> GetInfinite()
         {
+            var number = 1;
             while (true)
             {
-                yield return 1;
+                yield return number++;
             }
         }
 
-        using var cancellationTokenSource = new CancellationTokenSource(3);
+        using var cancellationTokenSource = new CancellationTokenSource(7);
         var task = ReadExecuteRetire.CreateAsync(
-            GetInfinite1(),
+            GetInfinite(),
             (trigger, token) =>
             {
                 Console.WriteLine("read, {0}", trigger);
@@ -97,14 +98,13 @@ public class Tests
                 Console.WriteLine("execute, {0}", fromRead);
                 return ValueTask.FromResult(int.Parse(fromRead));
             },
-            (trigger, fromExecute, token) =>
+            async (trigger, fromExecute, token) =>
             {
                 if (trigger == 3)
                 {
-                    throw new MyException("3");
+                    await cancellationTokenSource.CancelAsync();
                 }
                 Console.WriteLine("retire, {0}", fromExecute);
-                return ValueTask.CompletedTask;
             },
             new() { CancellationToken = cancellationTokenSource.Token });
 
