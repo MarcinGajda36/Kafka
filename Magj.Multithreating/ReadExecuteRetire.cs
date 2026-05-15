@@ -49,14 +49,42 @@ public sealed class ReadExecuteRetire
         public CancellationToken CancellationToken { get; init; } = CancellationToken.None;
     }
 
-    private abstract record Message;
-    private sealed record TriggerMessage<TTrigger>(TTrigger Trigger) : Message;
-    private sealed record ValueMessage<TTrigger, TValue>(TTrigger Trigger, TValue Value) : Message;
-    private sealed record DoneMessage() : Message
+    private enum MessageKind
     {
-        public static readonly DoneMessage Instance = new();
+        Value = 0,
+        Exception,
+        Done,
     }
-    private sealed record ExceptionMessage(Exception Exception) : Message;
+
+    private readonly struct TriggerMessage<TTrigger>(MessageKind kind, TTrigger trigger, Exception? exception)
+    {
+        public MessageKind Kind { get; } = kind;
+        public TTrigger Trigger { get; } = trigger;
+        public Exception? Exception { get; } = exception;
+
+        public void Deconstruct(out MessageKind kind, out TTrigger trigger, out Exception? exception)
+        {
+            kind = Kind;
+            trigger = Trigger;
+            exception = Exception;
+        }
+    }
+
+    private readonly struct Message<TTrigger, TValue>(MessageKind kind, TTrigger trigger, TValue value, Exception? exception)
+    {
+        public MessageKind Kind { get; } = kind;
+        public TTrigger Trigger { get; } = trigger;
+        public TValue Value { get; } = value;
+        public Exception? Exception { get; } = exception;
+
+        public void Deconstruct(out MessageKind kind, out TTrigger trigger, out TValue value, out Exception? exception)
+        {
+            kind = Kind;
+            trigger = Trigger;
+            value = Value;
+            exception = Exception;
+        }
+    }
 
     /// <summary>
     /// Helper to deal create parallel and order preserving flow.
@@ -157,7 +185,7 @@ public sealed class ReadExecuteRetire
             retire,
             options);
 
-    private static TransformBlock<Message, Message> CreateReadBlock<TTrigger, TRead>(
+    private static TransformBlock<TriggerMessage<TTrigger>, Message<TTrigger, TRead>> CreateReadBlock<TTrigger, TRead>(
         Func<TTrigger, CancellationToken, ValueTask<TRead>> read,
         ParallelableStepOptions readOptions,
         CancellationToken token)
@@ -168,15 +196,15 @@ public sealed class ReadExecuteRetire
                 {
                     return message switch
                     {
-                        TriggerMessage<TTrigger>(var trigger)
-                            => new ValueMessage<TTrigger, TRead>(trigger, await read(trigger, token)),
-                        var otherMessage
-                            => otherMessage,
+                        (MessageKind.Value, var trigger, _)
+                            => new Message<TTrigger, TRead>(MessageKind.Value, trigger, await read(trigger, token), null),
+                        (var kind, _, var exception)
+                            => new Message<TTrigger, TRead>(kind, default!, default!, exception),
                     };
                 }
                 catch (Exception exception)
                 {
-                    return new ExceptionMessage(exception);
+                    return new Message<TTrigger, TRead>(MessageKind.Exception, default!, default!, exception);
                 }
             },
             new ExecutionDataflowBlockOptions
@@ -187,7 +215,7 @@ public sealed class ReadExecuteRetire
                 CancellationToken = token,
             });
 
-    private static TransformBlock<Message, Message> CreateExecuteBlock<TTrigger, TRead, TExecute>(
+    private static TransformBlock<Message<TTrigger, TRead>, Message<TTrigger, TExecute>> CreateExecuteBlock<TTrigger, TRead, TExecute>(
         Func<TTrigger, TRead, CancellationToken, ValueTask<TExecute>> execute,
         ParallelableStepOptions executeOptions,
         CancellationToken token)
@@ -198,15 +226,15 @@ public sealed class ReadExecuteRetire
                 {
                     return message switch
                     {
-                        ValueMessage<TTrigger, TRead>(var trigger, var read)
-                            => new ValueMessage<TTrigger, TExecute>(trigger, await execute(trigger, read, token)),
-                        var otherMessage
-                            => otherMessage,
+                        (MessageKind.Value, var trigger, var read, _)
+                            => new Message<TTrigger, TExecute>(MessageKind.Value, trigger, await execute(trigger, read, token), null),
+                        (var kind, _, _, var exception)
+                            => new Message<TTrigger, TExecute>(kind, default!, default!, exception),
                     };
                 }
                 catch (Exception exception)
                 {
-                    return new ExceptionMessage(exception);
+                    return new Message<TTrigger, TExecute>(MessageKind.Exception, default!, default!, exception);
                 }
             },
             new ExecutionDataflowBlockOptions
@@ -217,7 +245,7 @@ public sealed class ReadExecuteRetire
                 CancellationToken = token,
             });
 
-    private static ActionBlock<Message> CreateRetireBlock<TTrigger, TExecute>(
+    private static ActionBlock<Message<TTrigger, TExecute>> CreateRetireBlock<TTrigger, TExecute>(
         Func<TTrigger, TExecute, CancellationToken, ValueTask> retire,
         TaskCompletionSource retireCompletionSource,
         RetireStepOptions retireOptions,
@@ -234,14 +262,14 @@ public sealed class ReadExecuteRetire
 
                     switch (message)
                     {
-                        case ValueMessage<TTrigger, TExecute>(var trigger, var execute):
+                        case (MessageKind.Value, var trigger, var execute, _):
                             await retire(trigger, execute, token);
                             break;
-                        case DoneMessage:
-                            _ = retireCompletionSource.TrySetResult();
+                        case (MessageKind.Exception, _, _, var exception):
+                            _ = retireCompletionSource.TrySetException(exception!);
                             break;
-                        case ExceptionMessage(var exception):
-                            _ = retireCompletionSource.TrySetException(exception);
+                        case (MessageKind.Done, _, _, _):
+                            _ = retireCompletionSource.TrySetResult();
                             break;
                         default:
                             _ = retireCompletionSource.TrySetException(new ArgumentOutOfRangeException(nameof(message), message, "Unrecognized message type"));
@@ -260,16 +288,16 @@ public sealed class ReadExecuteRetire
                 CancellationToken = token
             });
 
-    private static async Task FeedReadsAsync<TTrigger>(
+    private static async Task FeedReadsAsync<TTrigger, TRead>(
         IAsyncEnumerable<TTrigger> triggers,
-        TransformBlock<Message, Message> read,
+        TransformBlock<TriggerMessage<TTrigger>, Message<TTrigger, TRead>> read,
         CancellationToken token)
     {
         try
         {
             await foreach (var trigger in triggers.WithCancellation(token))
             {
-                if ((await read.SendAsync(new TriggerMessage<TTrigger>(trigger), token)) is false)
+                if ((await read.SendAsync(new TriggerMessage<TTrigger>(MessageKind.Value, trigger, null), token)) is false)
                 {
                     return;
                 }
@@ -277,11 +305,11 @@ public sealed class ReadExecuteRetire
         }
         catch (Exception exception)
         {
-            _ = await read.SendAsync(new ExceptionMessage(exception), token);
+            _ = await read.SendAsync(new TriggerMessage<TTrigger>(MessageKind.Exception, default!, exception), token);
         }
         finally
         {
-            _ = await read.SendAsync(DoneMessage.Instance, token);
+            _ = await read.SendAsync(new TriggerMessage<TTrigger>(MessageKind.Done, default!, null));
         }
     }
 }
