@@ -56,35 +56,8 @@ public sealed class ReadExecuteRetire
         Done,
     }
 
-    private readonly struct TriggerMessage<TTrigger>(MessageKind kind, TTrigger trigger, Exception? exception)
-    {
-        public MessageKind Kind { get; } = kind;
-        public TTrigger Trigger { get; } = trigger;
-        public Exception? Exception { get; } = exception;
-
-        public void Deconstruct(out MessageKind kind, out TTrigger trigger, out Exception? exception)
-        {
-            kind = Kind;
-            trigger = Trigger;
-            exception = Exception;
-        }
-    }
-
-    private readonly struct Message<TTrigger, TValue>(MessageKind kind, TTrigger trigger, TValue value, Exception? exception)
-    {
-        public MessageKind Kind { get; } = kind;
-        public TTrigger Trigger { get; } = trigger;
-        public TValue Value { get; } = value;
-        public Exception? Exception { get; } = exception;
-
-        public void Deconstruct(out MessageKind kind, out TTrigger trigger, out TValue value, out Exception? exception)
-        {
-            kind = Kind;
-            trigger = Trigger;
-            value = Value;
-            exception = Exception;
-        }
-    }
+    private readonly record struct TriggerMessage<TTrigger>(MessageKind Kind, TTrigger Trigger, Exception? Exception);
+    private readonly record struct Message<TTrigger, TValue>(MessageKind Kind, TTrigger Trigger, TValue Value, Exception? Exception);
 
     /// <summary>
     /// Helper to deal create parallel and order preserving flow.
