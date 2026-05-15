@@ -65,9 +65,9 @@ public sealed record AtLeastOnceStepSettings()
     /// <summary>
     /// Logger used to log Exceptions.
     /// Fatal kafka exception and Unhandled processor exceptions are still causing throw, so i may not be necessary to assign this.
-    /// null by default.
+    /// NullLogger.Instance by default.
     /// </summary>
-    public ILogger? Logger { get; init; } = null;
+    public ILogger Logger { get; init; } = NullLogger.Instance;
 }
 
 public sealed partial class KafkaClient

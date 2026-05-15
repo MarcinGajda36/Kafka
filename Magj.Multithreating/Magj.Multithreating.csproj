@@ -13,7 +13,7 @@
       Starting point is static method: Magj.Multithreating.ReadExecuteRetire.CreateAsync(...);
     </Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <Version>1.0.1</Version>
+    <Version>1.0.2</Version>
     <Copyright>MIT</Copyright>
     <PackageProjectUrl>https://github.com/MarcinGajda36/Kafka/tree/main/Magj.Multithreating</PackageProjectUrl>
   </PropertyGroup>
