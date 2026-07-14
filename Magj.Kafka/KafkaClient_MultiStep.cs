@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 // Next step needs to know type of previous step to be type sefe,
 // so dedicated 3 step feels better then collection of multistep that require passing object then casting
 // altho object + casting can be implemented for traing and it may be cool and usefull 
-public sealed record AtLeastOnceMultiStepSettings(
+internal sealed record AtLeastOnceMultiStepSettings(
     string Topic,
     string BootstrapServers,
     string GroupId)
@@ -40,7 +40,7 @@ public sealed record AtLeastOnceMultiStepSettings(
     public AutoOffsetReset AutoOffsetReset { get; init; } = AutoOffsetReset.Earliest;
 }
 
-public sealed record AtLeastOnceStepSettings()
+internal sealed record AtLeastOnceStepSettings()
 {
     /// <summary>
     /// Number of times processor function can be called in parallel.
@@ -70,6 +70,3 @@ public sealed record AtLeastOnceStepSettings()
     public ILogger Logger { get; init; } = NullLogger.Instance;
 }
 
-public sealed partial class KafkaClient
-{
-}

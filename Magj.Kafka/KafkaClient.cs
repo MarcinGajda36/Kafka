@@ -7,10 +7,20 @@ using Confluent.Kafka;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
+/// <summary>
+/// Settings for method: <see cref="KafkaClient.AtLeastOnceAsync"/>.
+/// </summary>
+/// <param name="Topic">
+/// The topic to subscribe to. A regex can be specified to subscribe to the set of
+/// all matching topics (which is updated as topics are added / removed from the cluster). 
+/// A regex must be front anchored to be recognized as a regex. e.g. ^myregex
+/// </param>
+/// <param name="BootstrapServers">Initial list of brokers as a CSV list of broker host or host:port.</param>
+/// <param name="GroupId">Client group id string. All clients sharing the same group.id belong to the same group.</param>
 public sealed record AtLeastOnceSettings(
     string Topic,
-    string BootstrapServers,
-    string GroupId)
+    string BootstrapServers = "localhost:9092",
+    string GroupId = "")
 {
     /// <summary>
     /// Number of times processor function can be called in parallel.
@@ -20,19 +30,20 @@ public sealed record AtLeastOnceSettings(
     public int MaxDegreeOfParallelism { get; init; } = 1;
 
     /// <summary>
-    /// Amount of messages that can wait in memory for processing.
+    /// Amount of messages that can be queued in memory for processing.
     /// Can be increased for potential perf improvements, or decreased to consume less memory.
-    /// 4096 by default. -1 for unbounded. 
+    /// 4096 by default. -1 for unbounded.
     /// </summary>
     public int MaxBufferedMessages { get; init; } = 4096;
 
     /// <summary>
     /// How long we wait for message before we loop and try again.
+    /// TimeSpan.FromSeconds(1) by default.
     /// </summary>
     public TimeSpan ConsumeTimeout { get; init; } = TimeSpan.FromSeconds(1);
 
     /// <summary>
-    /// Scheduler used for receiving kafka messages and storing their offset after processing. 
+    /// Scheduler used for receiving kafka messages and storing their offset after processing.
     /// Leaving default is recommended.
     /// TaskScheduler.Default is default.
     /// </summary>
@@ -46,7 +57,7 @@ public sealed record AtLeastOnceSettings(
 
     /// <summary>
     /// Logger used to log Exceptions.
-    /// Fatal kafka exception and Unhandled processor exceptions are still causing throw, so i may not be necessary to assign this.
+    /// Fatal kafka exception and Unhandled processor exceptions are still causing throw, so it may not be necessary to assign this.
     /// NullLogger.Instance by default.
     /// </summary>
     public ILogger Logger { get; init; } = NullLogger.Instance;
@@ -58,8 +69,17 @@ public sealed record AtLeastOnceSettings(
     public AutoOffsetReset AutoOffsetReset { get; init; } = AutoOffsetReset.Earliest;
 }
 
-public sealed partial class KafkaClient
+public static partial class KafkaClient
 {
+    /// <summary>
+    /// At-least-once delivery guarantees no message is lost, but duplicates may occur during failures.
+    /// </summary>
+    /// <typeparam name="TKey">The Kafka message Key.</typeparam>
+    /// <typeparam name="TValue">The Kafka message Value.</typeparam>
+    /// <param name="settings">Settings for connecting to kafka and optionally for controlling processing details.</param>
+    /// <param name="processor">Operation to do on each kafka message.</param>
+    /// <param name="cancellationToken">Token for cancelling processing.</param>
+    /// <returns>Task that represents subscription and processing. Will throw on unhandled <see cref="processor"/> exceptions as well as on fatal ConsumeException.</returns>
     public static Task AtLeastOnceAsync<TKey, TValue>(
         AtLeastOnceSettings settings,
         Func<ConsumeResult<TKey, TValue>, CancellationToken, ValueTask> processor,
@@ -140,12 +160,11 @@ public sealed partial class KafkaClient
     {
         var logger = settings.Logger;
         object?[] loggerParams = [settings.Topic, settings.GroupId];
-        var consumeTimeout = settings.ConsumeTimeout;
         while (cancellationToken.IsCancellationRequested is false)
         {
             try
             {
-                var kafkaMessage = consumer.Consume(consumeTimeout);
+                var kafkaMessage = consumer.Consume(settings.ConsumeTimeout);
                 if (kafkaMessage != null)
                 {
                     if (kafkaProcessor.Enqueue(kafkaMessage) is false)
