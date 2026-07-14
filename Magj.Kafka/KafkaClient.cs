@@ -84,7 +84,7 @@ public static partial class KafkaClient
     /// EnableAutoOffsetStore will always be false to maintain the contract of method name 'AtLeastOnce'.</param>
     /// <param name="consumerBuilderOptions">Action that allows configuring <see cref="ConsumerBuilder{TKey, TValue}"/>.</param>
     /// <param name="cancellationToken">Token for cancelling processing.</param>
-    /// <returns>Task that represents subscription and processing. Will throw on unhandled <see cref="processor"/> exceptions as well as on fatal ConsumeException.</returns>
+    /// <returns>Task that represents subscription and processing. Will throw on unhandled <see cref="processor"/> exceptions as well as on fatal <see cref="ConsumeException"/>.</returns>
     public static Task AtLeastOnceAsync<TKey, TValue>(
         AtLeastOnceSettings settings,
         Func<ConsumeResult<TKey, TValue>, CancellationToken, ValueTask> processor,
@@ -111,7 +111,7 @@ public static partial class KafkaClient
     /// <param name="settings">Settings for connecting to kafka and optionally for controlling processing details.</param>
     /// <param name="processor">Operation to do on each kafka message.</param>
     /// <param name="cancellationToken">Token for cancelling processing.</param>
-    /// <returns>Task that represents subscription and processing. Will throw on unhandled <see cref="processor"/> exceptions as well as on fatal ConsumeException.</returns>
+    /// <returns>Task that represents subscription and processing. Will throw on unhandled <see cref="processor"/> exceptions as well as on fatal <see cref="ConsumeException"/>.</returns>
     public static Task AtLeastOnceAsync<TKey, TValue>(
         AtLeastOnceSettings settings,
         Func<ConsumeResult<TKey, TValue>, CancellationToken, ValueTask> processor,
