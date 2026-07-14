@@ -78,11 +78,18 @@ public static partial class KafkaClient
     /// <typeparam name="TValue">The Kafka message Value.</typeparam>
     /// <param name="settings">Settings for connecting to kafka and optionally for controlling processing details.</param>
     /// <param name="processor">Operation to do on each kafka message.</param>
+    /// <param name="consumerConfigOptions">
+    /// Action that allows configuring <see cref="ConsumerConfig"/>. 
+    /// Invoked after <see cref="settings"/> are applied.
+    /// EnableAutoOffsetStore will always be false to maintain the contract of method name 'AtLeastOnce'.</param>
+    /// <param name="consumerBuilderOptions">Action that allows configuring <see cref="ConsumerBuilder{TKey, TValue}"/>.</param>
     /// <param name="cancellationToken">Token for cancelling processing.</param>
     /// <returns>Task that represents subscription and processing. Will throw on unhandled <see cref="processor"/> exceptions as well as on fatal ConsumeException.</returns>
     public static Task AtLeastOnceAsync<TKey, TValue>(
         AtLeastOnceSettings settings,
         Func<ConsumeResult<TKey, TValue>, CancellationToken, ValueTask> processor,
+        Action<ConsumerConfig>? consumerConfigOptions = null,
+        Action<ConsumerBuilder<TKey, TValue>>? consumerBuilderOptions = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(settings);
@@ -93,27 +100,45 @@ public static partial class KafkaClient
         ArgumentNullException.ThrowIfNull(settings.ProcessorScheduler);
         ArgumentNullException.ThrowIfNull(settings.Logger);
         ArgumentNullException.ThrowIfNull(processor);
-        return AtLeastOnceCore(settings, processor, cancellationToken);
+        return AtLeastOnceCore(settings, processor, consumerConfigOptions, consumerBuilderOptions, cancellationToken);
     }
+
+    /// <summary>
+    /// At-least-once delivery guarantees no message is lost, but duplicates may occur during failures.
+    /// </summary>
+    /// <typeparam name="TKey">The Kafka message Key.</typeparam>
+    /// <typeparam name="TValue">The Kafka message Value.</typeparam>
+    /// <param name="settings">Settings for connecting to kafka and optionally for controlling processing details.</param>
+    /// <param name="processor">Operation to do on each kafka message.</param>
+    /// <param name="cancellationToken">Token for cancelling processing.</param>
+    /// <returns>Task that represents subscription and processing. Will throw on unhandled <see cref="processor"/> exceptions as well as on fatal ConsumeException.</returns>
+    public static Task AtLeastOnceAsync<TKey, TValue>(
+        AtLeastOnceSettings settings,
+        Func<ConsumeResult<TKey, TValue>, CancellationToken, ValueTask> processor,
+        CancellationToken cancellationToken = default)
+        => AtLeastOnceAsync(settings, processor, null, null, cancellationToken);
 
     private static async Task AtLeastOnceCore<TKey, TValue>(
         AtLeastOnceSettings settings,
         Func<ConsumeResult<TKey, TValue>, CancellationToken, ValueTask> processor,
+        Action<ConsumerConfig>? consumerConfigOptions,
+        Action<ConsumerBuilder<TKey, TValue>>? consumerBuilderOptions,
         CancellationToken cancellationToken)
     {
-        var configuration = AutoOffsetDisabledConfig(settings);
-        using var client = new ConsumerBuilder<TKey, TValue>(configuration).Build();
+        ConsumerConfig configuration = new()
+        {
+            BootstrapServers = settings.BootstrapServers,
+            AutoOffsetReset = settings.AutoOffsetReset,
+            GroupId = settings.GroupId,
+        };
+        consumerConfigOptions?.Invoke(configuration);
+        configuration.EnableAutoOffsetStore = false;
+
+        var builder = new ConsumerBuilder<TKey, TValue>(configuration);
+        consumerBuilderOptions?.Invoke(builder);
+        using var client = builder.Build();
         await ConsumeAsync(client, processor, settings, cancellationToken);
     }
-
-    private static ConsumerConfig AutoOffsetDisabledConfig(AtLeastOnceSettings kafkaSettings)
-        => new()
-        {
-            BootstrapServers = kafkaSettings.BootstrapServers,
-            GroupId = kafkaSettings.GroupId,
-            AutoOffsetReset = kafkaSettings.AutoOffsetReset,
-            EnableAutoOffsetStore = false,
-        };
 
     private static async Task ConsumeAsync<TKey, TValue>(
         IConsumer<TKey, TValue> consumer,
