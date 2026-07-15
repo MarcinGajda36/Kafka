@@ -125,7 +125,7 @@ public static partial class KafkaClient
         Action<ConsumerBuilder<TKey, TValue>>? consumerBuilderOptions,
         CancellationToken cancellationToken)
     {
-        ConsumerConfig configuration = new()
+        var configuration = new ConsumerConfig()
         {
             BootstrapServers = settings.BootstrapServers,
             AutoOffsetReset = settings.AutoOffsetReset,
