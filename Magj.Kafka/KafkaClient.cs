@@ -148,7 +148,7 @@ public static partial class KafkaClient
     {
         using var cancellationSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         cancellationToken = cancellationSource.Token;
-        using var kafkaProcessor = new ProcessAndOffsetProcessor<TKey, TValue>(
+        using var kafkaProcessor = new SingleStepProcessor<TKey, TValue>(
             consumer,
             processor,
             settings,
@@ -179,7 +179,7 @@ public static partial class KafkaClient
 
     private static void ConsumeAndProcess<TKey, TValue>(
         IConsumer<TKey, TValue> consumer,
-        ProcessAndOffsetProcessor<TKey, TValue> kafkaProcessor,
+        SingleStepProcessor<TKey, TValue> kafkaProcessor,
         AtLeastOnceSettings settings,
         CancellationToken cancellationToken)
     {

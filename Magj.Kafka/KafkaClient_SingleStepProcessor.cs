@@ -9,14 +9,14 @@ using Microsoft.Extensions.Logging;
 
 public partial class KafkaClient
 {
-    private sealed class ProcessAndOffsetProcessor<TKey, TValue> : IDisposable
+    private sealed class SingleStepProcessor<TKey, TValue> : IDisposable
     {
         private readonly TransformBlock<ConsumeResult<TKey, TValue>, ConsumeResult<TKey, TValue>> processingBlock;
         private readonly IDisposable processingOffsetLink;
 
         internal readonly Task Completion;
 
-        public ProcessAndOffsetProcessor(
+        public SingleStepProcessor(
             IConsumer<TKey, TValue> consumer,
             Func<ConsumeResult<TKey, TValue>, CancellationToken, ValueTask> processor,
             AtLeastOnceSettings settings,
