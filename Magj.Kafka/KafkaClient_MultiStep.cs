@@ -5,7 +5,16 @@ using System.Threading;
 using System.Threading.Tasks;
 using Confluent.Kafka;
 
-// TODO: add some docs
+/// <summary>
+/// Settings for method: <see cref="KafkaClient.AtLeastOnceMultiStepAsync"/>.
+/// </summary>
+/// <param name="Topic">
+/// The topic to subscribe to. A regex can be specified to subscribe to the set of
+/// all matching topics (which is updated as topics are added / removed from the cluster). 
+/// A regex must be front anchored to be recognized as a regex. e.g. ^myregex
+/// </param>
+/// <param name="BootstrapServers">Initial list of brokers as a CSV list of broker host or host:port.</param>
+/// <param name="GroupId">Client group id string. All clients sharing the same group.id belong to the same group.</param>
 public sealed record AtLeastOnceMultiStepSettings(
     string Topic,
     string BootstrapServers,
@@ -70,13 +79,18 @@ public partial class KafkaClient
 {
     /// <summary>
     /// At-least-once delivery guarantees no message is lost, but duplicates may occur during failures.
+    /// Allows for different steps to happen concurrently with their own MaxDegreeOfParallelism.
     /// </summary>
     /// <typeparam name="TKafkaKey">The Kafka message Key.</typeparam>
     /// <typeparam name="TKafkaValue">The Kafka message Value.</typeparam>
     /// <param name="settings">Settings for connecting to kafka and optionally for controlling processing details.</param>
     /// <param name="read">First operation to do on each kafka message.</param>
     /// <param name="execute">Second operation to do on each kafka message.</param>
-    /// <param name="retire">Final operation to do on each kafka message. To preserve order all side-effects, like saving to database should happen here.</param>
+    /// <param name="retire">
+    /// Final operation to do on each kafka message. 
+    /// To preserve order all side-effects, like saving to database, should happen here.
+    /// Triggers in exact same order as messages arrived from kafka with MaxDegreeOfParallelism set to 1.
+    /// </param>
     /// <param name="consumerConfigOptions">
     /// Action that allows configuring <see cref="ConsumerConfig"/>. 
     /// Invoked after <see cref="settings"/> are applied.
