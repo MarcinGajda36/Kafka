@@ -17,8 +17,8 @@ using Confluent.Kafka;
 /// <param name="GroupId">Client group id string. All clients sharing the same group.id belong to the same group.</param>
 public sealed record AtLeastOnceMultiStepSettings(
     string Topic,
-    string BootstrapServers,
-    string GroupId)
+    string BootstrapServers = "localhost:9092",
+    string GroupId = "")
 {
     /// <summary>
     /// How long we wait for message before we loop and try again.
