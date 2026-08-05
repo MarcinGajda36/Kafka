@@ -148,7 +148,7 @@ public partial class KafkaClient
     {
         using var cancellationSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         cancellationToken = cancellationSource.Token;
-        var consumeCompletionSource = new TaskCompletionSource();
+        var consumeCompletionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         await using var registerCancelation = cancellationToken.Register((state, cancellationToken) => ((TaskCompletionSource)state!).TrySetCanceled(cancellationToken), consumeCompletionSource);
         using var kafkaProcessor = new MultiStepProcessor<TKafkaKey, TKafkaValue, TRead, TExecute>(
             consumer,
