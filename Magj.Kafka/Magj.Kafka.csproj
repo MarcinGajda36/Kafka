@@ -13,7 +13,7 @@
 			Starting point is static method: Magj.Kafka.KafkaClient.AtLeastOnceAsync(...);
 		</Description>
 		<PackageLicenseExpression>MIT</PackageLicenseExpression>
-		<Version>2.0.3</Version>
+		<Version>2.0.4</Version>
 		<Copyright>MIT</Copyright>
 		<PackageProjectUrl>https://github.com/MarcinGajda36/Kafka</PackageProjectUrl>
 	</PropertyGroup>
