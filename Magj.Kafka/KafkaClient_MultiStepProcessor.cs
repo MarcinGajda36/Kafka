@@ -8,10 +8,9 @@ using Confluent.Kafka;
 
 public partial class KafkaClient
 {
-    private sealed class MultiStepProcessor<TKey, TValue, TRead, TExecute> : IDisposable
+    private sealed class Done() { public static readonly Done Instance = new(); }
+    private sealed class MultiStepProcessor<TKafkaKey, TKafkaValue, TRead, TExecute> : IDisposable
     {
-        private sealed class Done() { public static readonly Done Instance = new(); }
-
         private readonly struct StepMessage<TStepResult>(object? doneOrExceptionOrKafkaMessage, TStepResult stepResult)
         {
             public readonly object? DoneOrExceptionOrKafkaMessage = doneOrExceptionOrKafkaMessage;
@@ -24,13 +23,14 @@ public partial class KafkaClient
         }
 
         private readonly TransformBlock<object, StepMessage<TRead>> readBlock;
+        public readonly Task Completion;
         private readonly MultiDispose links;
 
         public MultiStepProcessor(
-            IConsumer<TKey, TValue> consumer,
-            Func<ConsumeResult<TKey, TValue>, CancellationToken, ValueTask<TRead>> read,
-            Func<ConsumeResult<TKey, TValue>, TRead, CancellationToken, ValueTask<TExecute>> execute,
-            Func<ConsumeResult<TKey, TValue>, TExecute, CancellationToken, ValueTask> retire,
+            IConsumer<TKafkaKey, TKafkaValue> consumer,
+            Func<ConsumeResult<TKafkaKey, TKafkaValue>, CancellationToken, ValueTask<TRead>> read,
+            Func<ConsumeResult<TKafkaKey, TKafkaValue>, TRead, CancellationToken, ValueTask<TExecute>> execute,
+            Func<ConsumeResult<TKafkaKey, TKafkaValue>, TExecute, CancellationToken, ValueTask> retire,
             AtLeastOnceMultiStepSettings settings,
             TaskCompletionSource retireCompletionSource,
             CancellationToken cancellationToken)
@@ -38,12 +38,14 @@ public partial class KafkaClient
             readBlock = CreateReadBlock(read, settings.ReadSettings, cancellationToken);
             var executeBlock = CreateExecuteBlock(execute, settings.ExecuteSettings, cancellationToken);
             var retireBlock = CreateRetireBlock(retireCompletionSource, retire, consumer, settings.RetireSettings, cancellationToken);
+            var propagateCompletionLinkOptions = new DataflowLinkOptions { PropagateCompletion = true };
             var readExecuteLink = readBlock.LinkTo(
                 executeBlock,
-                new DataflowLinkOptions { PropagateCompletion = true });
+                propagateCompletionLinkOptions);
             var executeRetireLink = executeBlock.LinkTo(
                 retireBlock,
-                new DataflowLinkOptions { PropagateCompletion = true });
+                propagateCompletionLinkOptions);
+            Completion = Task.WhenAll(readBlock.Completion, executeBlock.Completion, retireBlock.Completion);
             links = new MultiDispose([readExecuteLink, executeRetireLink]);
         }
 
@@ -57,7 +59,7 @@ public partial class KafkaClient
             => new(new ArgumentOutOfRangeException(nameof(message), message, "Unexpected message."), default!);
 
         private static TransformBlock<object, StepMessage<TRead>> CreateReadBlock(
-            Func<ConsumeResult<TKey, TValue>, CancellationToken, ValueTask<TRead>> read,
+            Func<ConsumeResult<TKafkaKey, TKafkaValue>, CancellationToken, ValueTask<TRead>> read,
             AtLeastOnceStepSettings settings,
             CancellationToken cancellationToken)
             => new(
@@ -67,7 +69,7 @@ public partial class KafkaClient
                     {
                         return fromKafka switch
                         {
-                            ConsumeResult<TKey, TValue> kafkaMessage => new StepMessage<TRead>(kafkaMessage, await read(kafkaMessage, cancellationToken)),
+                            ConsumeResult<TKafkaKey, TKafkaValue> kafkaMessage => new StepMessage<TRead>(kafkaMessage, await read(kafkaMessage, cancellationToken)),
                             Done done => new StepMessage<TRead>(done, default!),
                             Exception exception => new StepMessage<TRead>(exception, default!),
                             var unexpected => UnexpectedMessage<TRead>(unexpected),
@@ -87,7 +89,7 @@ public partial class KafkaClient
                 });
 
         private static TransformBlock<StepMessage<TRead>, StepMessage<TExecute>> CreateExecuteBlock(
-            Func<ConsumeResult<TKey, TValue>, TRead, CancellationToken, ValueTask<TExecute>> execute,
+            Func<ConsumeResult<TKafkaKey, TKafkaValue>, TRead, CancellationToken, ValueTask<TExecute>> execute,
             AtLeastOnceStepSettings settings,
             CancellationToken cancellationToken)
             => new(
@@ -97,13 +99,14 @@ public partial class KafkaClient
                     {
                         return fromRead switch
                         {
-                            { DoneOrExceptionOrKafkaMessage: ConsumeResult<TKey, TValue> kafkaMessage, StepResult: var read }
+                            { DoneOrExceptionOrKafkaMessage: ConsumeResult<TKafkaKey, TKafkaValue> kafkaMessage, StepResult: var read }
                                 => new StepMessage<TExecute>(kafkaMessage, await execute(kafkaMessage, read, cancellationToken)),
                             { DoneOrExceptionOrKafkaMessage: Done done }
                                 => new StepMessage<TExecute>(done, default!),
                             { DoneOrExceptionOrKafkaMessage: Exception exception }
                                 => new StepMessage<TExecute>(exception, default!),
-                            var unexpected => UnexpectedMessage<TExecute>(unexpected),
+                            var unexpected
+                                => UnexpectedMessage<TExecute>(unexpected),
                         };
                     }
                     catch (Exception ex)
@@ -121,8 +124,8 @@ public partial class KafkaClient
 
         private static ActionBlock<StepMessage<TExecute>> CreateRetireBlock(
             TaskCompletionSource retireCompletionSource,
-            Func<ConsumeResult<TKey, TValue>, TExecute, CancellationToken, ValueTask> retire,
-            IConsumer<TKey, TValue> consumer,
+            Func<ConsumeResult<TKafkaKey, TKafkaValue>, TExecute, CancellationToken, ValueTask> retire,
+            IConsumer<TKafkaKey, TKafkaValue> consumer,
             AtLeastOnceRetireSettings settings,
             CancellationToken cancellationToken)
             => new(
@@ -137,7 +140,7 @@ public partial class KafkaClient
 
                         switch (fromExecute)
                         {
-                            case { DoneOrExceptionOrKafkaMessage: ConsumeResult<TKey, TValue> kafkaMessage, StepResult: var execute }:
+                            case { DoneOrExceptionOrKafkaMessage: ConsumeResult<TKafkaKey, TKafkaValue> kafkaMessage, StepResult: var execute }:
                                 await retire(kafkaMessage, execute, cancellationToken);
                                 consumer.StoreOffset(kafkaMessage);
                                 break;

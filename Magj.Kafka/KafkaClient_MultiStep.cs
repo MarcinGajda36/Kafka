@@ -1,11 +1,12 @@
 ﻿namespace Magj.Kafka;
 
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using Confluent.Kafka;
 
 // TODO: add some docs
-internal sealed record AtLeastOnceMultiStepSettings(
+public sealed record AtLeastOnceMultiStepSettings(
     string Topic,
     string BootstrapServers,
     string GroupId)
@@ -26,7 +27,7 @@ internal sealed record AtLeastOnceMultiStepSettings(
     public AtLeastOnceRetireSettings RetireSettings { get; init; } = new();
 }
 
-internal sealed record AtLeastOnceStepSettings()
+public sealed record AtLeastOnceStepSettings()
 {
     /// <summary>
     /// Number of times processor function can be called in parallel.
@@ -49,7 +50,7 @@ internal sealed record AtLeastOnceStepSettings()
     public TaskScheduler StepScheduler { get; init; } = TaskScheduler.Default;
 }
 
-internal sealed record AtLeastOnceRetireSettings()
+public sealed record AtLeastOnceRetireSettings()
 {
     /// <summary>
     /// Amount of messages that can wait in memory for processing.
@@ -67,135 +68,148 @@ internal sealed record AtLeastOnceRetireSettings()
 
 public partial class KafkaClient
 {
-    ///// <summary>
-    ///// At-least-once delivery guarantees no message is lost, but duplicates may occur during failures.
-    ///// </summary>
-    ///// <typeparam name="TKey">The Kafka message Key.</typeparam>
-    ///// <typeparam name="TValue">The Kafka message Value.</typeparam>
-    ///// <param name="settings">Settings for connecting to kafka and optionally for controlling processing details.</param>
-    ///// <param name="processor">Operation to do on each kafka message.</param>
-    ///// <param name="consumerConfigOptions">
-    ///// Action that allows configuring <see cref="ConsumerConfig"/>. 
-    ///// Invoked after <see cref="settings"/> are applied.
-    ///// EnableAutoOffsetStore will always be false to maintain the contract of method name 'AtLeastOnce'.</param>
-    ///// <param name="consumerBuilderOptions">Action that allows configuring <see cref="ConsumerBuilder{TKey, TValue}"/>.</param>
-    ///// <param name="cancellationToken">Token for cancelling processing.</param>
-    ///// <returns>Task that represents subscription and processing. Will throw on unhandled <see cref="processor"/> exceptions as well as on fatal <see cref="ConsumeException"/>.</returns>
-    //public static Task AtLeastOnceMultiStepAsync<TKey, TValue>(
-    //    AtLeastOnceSettings settings,
-    //    Func<ConsumeResult<TKey, TValue>, CancellationToken, ValueTask> processor,
-    //    Action<ConsumerConfig>? consumerConfigOptions = null,
-    //    Action<ConsumerBuilder<TKey, TValue>>? consumerBuilderOptions = null,
-    //    CancellationToken cancellationToken = default)
-    //{
-    //    ArgumentNullException.ThrowIfNull(settings);
-    //    // TODO: maybe check settings.X in setters
-    //    ArgumentOutOfRangeException.ThrowIfLessThan(settings.MaxDegreeOfParallelism, -1);
-    //    ArgumentOutOfRangeException.ThrowIfLessThan(settings.MaxBufferedMessages, -1);
-    //    ArgumentNullException.ThrowIfNull(settings.ConsumerScheduler);
-    //    ArgumentNullException.ThrowIfNull(settings.ProcessorScheduler);
-    //    ArgumentNullException.ThrowIfNull(settings.Logger);
-    //    ArgumentNullException.ThrowIfNull(processor);
-    //    return AtLeastOnceMultiStepCore(settings, processor, consumerConfigOptions, consumerBuilderOptions, cancellationToken);
-    //}
+    /// <summary>
+    /// At-least-once delivery guarantees no message is lost, but duplicates may occur during failures.
+    /// </summary>
+    /// <typeparam name="TKafkaKey">The Kafka message Key.</typeparam>
+    /// <typeparam name="TKafkaValue">The Kafka message Value.</typeparam>
+    /// <param name="settings">Settings for connecting to kafka and optionally for controlling processing details.</param>
+    /// <param name="read">First operation to do on each kafka message.</param>
+    /// <param name="execute">Second operation to do on each kafka message.</param>
+    /// <param name="retire">Final operation to do on each kafka message. To preserve order all side-effects, like saving to database should happen here.</param>
+    /// <param name="consumerConfigOptions">
+    /// Action that allows configuring <see cref="ConsumerConfig"/>. 
+    /// Invoked after <see cref="settings"/> are applied.
+    /// EnableAutoOffsetStore will always be false to maintain the contract of method name 'AtLeastOnce'.</param>
+    /// <param name="consumerBuilderOptions">Action that allows configuring <see cref="ConsumerBuilder{TKafkaKey, TKafkaValue}"/>.</param>
+    /// <param name="cancellationToken">Token for cancelling processing.</param>
+    /// <returns>Task that represents subscription and processing. Will throw on unhandled exceptions.</returns>
+    public static Task AtLeastOnceMultiStepAsync<TKafkaKey, TKafkaValue, TRead, TExecute>(
+        AtLeastOnceMultiStepSettings settings,
+        Func<ConsumeResult<TKafkaKey, TKafkaValue>, CancellationToken, ValueTask<TRead>> read,
+        Func<ConsumeResult<TKafkaKey, TKafkaValue>, TRead, CancellationToken, ValueTask<TExecute>> execute,
+        Func<ConsumeResult<TKafkaKey, TKafkaValue>, TExecute, CancellationToken, ValueTask> retire,
+        Action<ConsumerConfig>? consumerConfigOptions = null,
+        Action<ConsumerBuilder<TKafkaKey, TKafkaValue>>? consumerBuilderOptions = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(settings);
+        ArgumentNullException.ThrowIfNull(read);
+        ArgumentNullException.ThrowIfNull(execute);
+        ArgumentNullException.ThrowIfNull(retire);
+        return AtLeastOnceMultiStepCore(settings, read, execute, retire, consumerConfigOptions, consumerBuilderOptions, cancellationToken);
+    }
 
-    ///// <summary>
-    ///// At-least-once delivery guarantees no message is lost, but duplicates may occur during failures.
-    ///// </summary>
-    ///// <typeparam name="TKey">The Kafka message Key.</typeparam>
-    ///// <typeparam name="TValue">The Kafka message Value.</typeparam>
-    ///// <param name="settings">Settings for connecting to kafka and optionally for controlling processing details.</param>
-    ///// <param name="processor">Operation to do on each kafka message.</param>
-    ///// <param name="cancellationToken">Token for cancelling processing.</param>
-    ///// <returns>Task that represents subscription and processing. Will throw on unhandled <see cref="processor"/> exceptions as well as on fatal <see cref="ConsumeException"/>.</returns>
-    //public static Task AtLeastOnceMultiStepAsync<TKey, TValue>(
-    //    AtLeastOnceSettings settings,
-    //    Func<ConsumeResult<TKey, TValue>, CancellationToken, ValueTask> processor,
-    //    CancellationToken cancellationToken = default)
-    //    => AtLeastOnceAsync(settings, processor, null, null, cancellationToken);
+    private static async Task AtLeastOnceMultiStepCore<TKafkaKey, TKafkaValue, TRead, TExecute>(
+        AtLeastOnceMultiStepSettings settings,
+        Func<ConsumeResult<TKafkaKey, TKafkaValue>, CancellationToken, ValueTask<TRead>> read,
+        Func<ConsumeResult<TKafkaKey, TKafkaValue>, TRead, CancellationToken, ValueTask<TExecute>> execute,
+        Func<ConsumeResult<TKafkaKey, TKafkaValue>, TExecute, CancellationToken, ValueTask> retire,
+        Action<ConsumerConfig>? consumerConfigOptions,
+        Action<ConsumerBuilder<TKafkaKey, TKafkaValue>>? consumerBuilderOptions,
+        CancellationToken cancellationToken)
+    {
+        var configuration = new ConsumerConfig()
+        {
+            BootstrapServers = settings.BootstrapServers,
+            AutoOffsetReset = settings.AutoOffsetReset,
+            GroupId = settings.GroupId,
+        };
+        consumerConfigOptions?.Invoke(configuration);
+        configuration.EnableAutoOffsetStore = false;
 
-    //private static async Task AtLeastOnceMultiStepCore<TKey, TValue>(
-    //    AtLeastOnceSettings settings,
-    //    Func<ConsumeResult<TKey, TValue>, CancellationToken, ValueTask> processor,
-    //    Action<ConsumerConfig>? consumerConfigOptions,
-    //    Action<ConsumerBuilder<TKey, TValue>>? consumerBuilderOptions,
-    //    CancellationToken cancellationToken)
-    //{
-    //    var configuration = new ConsumerConfig()
-    //    {
-    //        BootstrapServers = settings.BootstrapServers,
-    //        AutoOffsetReset = settings.AutoOffsetReset,
-    //        GroupId = settings.GroupId,
-    //    };
-    //    consumerConfigOptions?.Invoke(configuration);
-    //    configuration.EnableAutoOffsetStore = false;
+        var builder = new ConsumerBuilder<TKafkaKey, TKafkaValue>(configuration);
+        consumerBuilderOptions?.Invoke(builder);
+        using var consumer = builder.Build();
+        await ConsumeMultiStepAsync(consumer, settings, read, execute, retire, cancellationToken);
+    }
 
-    //    var builder = new ConsumerBuilder<TKey, TValue>(configuration);
-    //    consumerBuilderOptions?.Invoke(builder);
-    //    using var client = builder.Build();
-    //    await ConsumeAsync(client, processor, settings, cancellationToken);
-    //}
+    private static async Task ConsumeMultiStepAsync<TKafkaKey, TKafkaValue, TRead, TExecute>(
+        IConsumer<TKafkaKey, TKafkaValue> consumer,
+        AtLeastOnceMultiStepSettings settings,
+        Func<ConsumeResult<TKafkaKey, TKafkaValue>, CancellationToken, ValueTask<TRead>> read,
+        Func<ConsumeResult<TKafkaKey, TKafkaValue>, TRead, CancellationToken, ValueTask<TExecute>> execute,
+        Func<ConsumeResult<TKafkaKey, TKafkaValue>, TExecute, CancellationToken, ValueTask> retire,
+        CancellationToken cancellationToken)
+    {
+        using var cancellationSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cancellationToken = cancellationSource.Token;
+        var consumeCompletionSource = new TaskCompletionSource();
+        await using var registerCancelation = cancellationToken.Register((state, cancellationToken) => ((TaskCompletionSource)state!).TrySetCanceled(cancellationToken), consumeCompletionSource);
+        using var kafkaProcessor = new MultiStepProcessor<TKafkaKey, TKafkaValue, TRead, TExecute>(
+            consumer,
+            read,
+            execute,
+            retire,
+            settings,
+            consumeCompletionSource,
+            cancellationToken);
 
-    //private static async Task ConsumeAsync<TKey, TValue>(
-    //    IConsumer<TKey, TValue> consumer,
-    //    Func<ConsumeResult<TKey, TValue>, CancellationToken, ValueTask> processor,
-    //    AtLeastOnceSettings settings,
-    //    CancellationToken cancellationToken)
-    //{
-    //    using var cancellationSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-    //    cancellationToken = cancellationSource.Token;
-    //    using var kafkaProcessor = new SingleStepProcessor<TKey, TValue>(
-    //        consumer,
-    //        processor,
-    //        settings,
-    //        cancellationToken);
+        var consumerTask = new Thread(
+            () =>
+            {
+                try
+                {
+                    consumer.Subscribe(settings.Topic);
+                    try
+                    {
+                        ConsumeAndMultiStepProcess(consumer, kafkaProcessor, settings.ConsumeTimeout, cancellationToken);
+                    }
+                    finally
+                    {
+                        consumer.Close();
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _ = consumeCompletionSource.TrySetException(ex);
+                }
+                finally
+                {
+                    _ = consumeCompletionSource.TrySetResult();
+                }
+            });
 
-    //    var processorTask = kafkaProcessor.Completion;
-    //    var consumerTask = Task.Factory.StartNew(
-    //        () =>
-    //        {
-    //            consumer.Subscribe(settings.Topic);
-    //            try
-    //            {
-    //                ConsumeAndProcess(consumer, kafkaProcessor, settings, cancellationToken);
-    //            }
-    //            finally
-    //            {
-    //                consumer.Close();
-    //            }
-    //        },
-    //        cancellationToken,
-    //        TaskCreationOptions.LongRunning,
-    //        settings.ConsumerScheduler);
+        consumerTask.Start();
+        try
+        {
+            await consumeCompletionSource.Task;
+        }
+        finally
+        {
+            await cancellationSource.CancelAsync();
+            await kafkaProcessor.Completion.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+            consumerTask.Join();
+        }
+    }
 
-    //    var firstToFinish = await Task.WhenAny(consumerTask, processorTask);
-    //    await cancellationSource.CancelAsync();
-    //    await Task.WhenAll(firstToFinish, consumerTask, processorTask);
-    //}
-
-    //private static void ConsumeAndProcess<TKey, TValue>(
-    //    IConsumer<TKey, TValue> consumer,
-    //    MultiStepProcessor<TKey, TValue> kafkaProcessor,
-    //    AtLeastOnceSettings settings,
-    //    CancellationToken cancellationToken)
-    //{
-    //    while (cancellationToken.IsCancellationRequested is false)
-    //    {
-    //        try
-    //        {
-    //            var kafkaMessage = consumer.Consume(settings.ConsumeTimeout);
-    //            if (kafkaMessage != null)
-    //            {
-    //                if (kafkaProcessor.Enqueue(kafkaMessage) is false)
-    //                {
-    //                    return;
-    //                }
-    //            }
-    //        }
-    //        catch (Exception ex)
-    //        {
-
-    //        }
-    //    }
-    //}
+    private static void ConsumeAndMultiStepProcess<TKafkaKey, TKafkaValue, TRead, TExecute>(
+        IConsumer<TKafkaKey, TKafkaValue> consumer,
+        MultiStepProcessor<TKafkaKey, TKafkaValue, TRead, TExecute> kafkaProcessor,
+        TimeSpan consumeTimeout,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (cancellationToken.IsCancellationRequested is false)
+            {
+                var kafkaMessage = consumer.Consume(consumeTimeout);
+                if (kafkaMessage != null)
+                {
+                    if (kafkaProcessor.Enqueue(kafkaMessage) is false)
+                    {
+                        return;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _ = kafkaProcessor.Enqueue(ex);
+        }
+        finally
+        {
+            _ = kafkaProcessor.Enqueue(Done.Instance);
+        }
+    }
 }
