@@ -26,8 +26,8 @@ public partial class KafkaClient
             var offsetBlock = CreateOffsetBlock(consumer, settings);
             processingOffsetLink = processingBlock.LinkTo(
                 offsetBlock,
-                new DataflowLinkOptions { PropagateCompletion = true });
-            Completion = offsetBlock.Completion;
+                propagateCompletionLinkOptions);
+            Completion = Task.WhenAll(processingBlock.Completion, offsetBlock.Completion);
         }
 
         public bool Enqueue(ConsumeResult<TKey, TValue> kafkaMessage)

@@ -31,8 +31,19 @@ public sealed record AtLeastOnceMultiStepSettings(
     /// </summary>
     public AutoOffsetReset AutoOffsetReset { get; init; } = AutoOffsetReset.Earliest;
 
+    /// <summary>
+    /// Settings for controlling how 'read' function will run.
+    /// </summary>
     public AtLeastOnceStepSettings ReadSettings { get; init; } = new();
+
+    /// <summary>
+    /// Settings for controlling how 'execute' function will run.
+    /// </summary>
     public AtLeastOnceStepSettings ExecuteSettings { get; init; } = new();
+
+    /// <summary>
+    /// Settings for controlling how 'retire' function will run.
+    /// </summary>
     public AtLeastOnceRetireSettings RetireSettings { get; init; } = new();
 }
 
@@ -131,6 +142,7 @@ public partial class KafkaClient
         };
         consumerConfigOptions?.Invoke(configuration);
         configuration.EnableAutoOffsetStore = false;
+        configuration.EnableAutoCommit = true;
 
         var builder = new ConsumerBuilder<TKafkaKey, TKafkaValue>(configuration);
         consumerBuilderOptions?.Invoke(builder);
@@ -149,7 +161,7 @@ public partial class KafkaClient
         using var cancellationSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         cancellationToken = cancellationSource.Token;
         var consumeCompletionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var registerCancelation = cancellationToken.Register((state, cancellationToken) => ((TaskCompletionSource)state!).TrySetCanceled(cancellationToken), consumeCompletionSource);
+        await using var registerCancelation = cancellationToken.Register(static (state, cancellationToken) => ((TaskCompletionSource)state!).TrySetCanceled(cancellationToken), consumeCompletionSource);
         using var kafkaProcessor = new MultiStepProcessor<TKafkaKey, TKafkaValue, TRead, TExecute>(
             consumer,
             read,
@@ -191,7 +203,7 @@ public partial class KafkaClient
         }
         finally
         {
-            await cancellationSource.CancelAsync();
+            await cancellationSource.CancelAsync().ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
             await kafkaProcessor.Completion.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
             consumerTask.Join();
         }
@@ -208,9 +220,9 @@ public partial class KafkaClient
             while (cancellationToken.IsCancellationRequested is false)
             {
                 var kafkaMessage = consumer.Consume(consumeTimeout);
-                if (kafkaMessage != null)
+                if (kafkaMessage is { } notNull)
                 {
-                    if (kafkaProcessor.Enqueue(kafkaMessage) is false)
+                    if (kafkaProcessor.Enqueue(notNull) is false)
                     {
                         return;
                     }

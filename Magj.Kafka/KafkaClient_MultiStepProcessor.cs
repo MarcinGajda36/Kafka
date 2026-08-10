@@ -9,19 +9,22 @@ using Confluent.Kafka;
 public partial class KafkaClient
 {
     private sealed class Done() { public static readonly Done Instance = new(); }
+
+    private readonly struct StepMessage<TStepResult>(object? doneOrExceptionOrKafkaMessage, TStepResult stepResult)
+    {
+        public readonly object? DoneOrExceptionOrKafkaMessage = doneOrExceptionOrKafkaMessage;
+        public readonly TStepResult StepResult = stepResult;
+    }
+
+    private readonly struct MultiDispose(IDisposable[] toDispose) : IDisposable
+    {
+        public void Dispose() => Array.ForEach(toDispose, static disposable => disposable.Dispose());
+    }
+
+    private static readonly DataflowLinkOptions propagateCompletionLinkOptions = new() { PropagateCompletion = true };
+
     private sealed class MultiStepProcessor<TKafkaKey, TKafkaValue, TRead, TExecute> : IDisposable
     {
-        private readonly struct StepMessage<TStepResult>(object? doneOrExceptionOrKafkaMessage, TStepResult stepResult)
-        {
-            public readonly object? DoneOrExceptionOrKafkaMessage = doneOrExceptionOrKafkaMessage;
-            public readonly TStepResult StepResult = stepResult;
-        }
-
-        private sealed class MultiDispose(IDisposable[] toDispose) : IDisposable
-        {
-            public void Dispose() => Array.ForEach(toDispose, disposable => disposable.Dispose());
-        }
-
         private readonly TransformBlock<object, StepMessage<TRead>> readBlock;
         public readonly Task Completion;
         private readonly MultiDispose links;
@@ -38,7 +41,7 @@ public partial class KafkaClient
             readBlock = CreateReadBlock(read, settings.ReadSettings, cancellationToken);
             var executeBlock = CreateExecuteBlock(execute, settings.ExecuteSettings, cancellationToken);
             var retireBlock = CreateRetireBlock(retireCompletionSource, retire, consumer, settings.RetireSettings, cancellationToken);
-            var propagateCompletionLinkOptions = new DataflowLinkOptions { PropagateCompletion = true };
+
             var readExecuteLink = readBlock.LinkTo(
                 executeBlock,
                 propagateCompletionLinkOptions);
@@ -51,9 +54,6 @@ public partial class KafkaClient
 
         public bool Enqueue(object kafkaMessage)
             => readBlock.Post(kafkaMessage);
-
-        public void Complete()
-            => readBlock.Complete();
 
         private static StepMessage<StepMessage> UnexpectedMessage<StepMessage>(object message)
             => new(new ArgumentOutOfRangeException(nameof(message), message, "Unexpected message."), default!);

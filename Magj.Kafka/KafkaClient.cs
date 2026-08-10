@@ -133,6 +133,7 @@ public static partial class KafkaClient
         };
         consumerConfigOptions?.Invoke(configuration);
         configuration.EnableAutoOffsetStore = false;
+        configuration.EnableAutoCommit = true;
 
         var builder = new ConsumerBuilder<TKey, TValue>(configuration);
         consumerBuilderOptions?.Invoke(builder);
@@ -190,9 +191,9 @@ public static partial class KafkaClient
             try
             {
                 var kafkaMessage = consumer.Consume(settings.ConsumeTimeout);
-                if (kafkaMessage != null)
+                if (kafkaMessage is { } notNull)
                 {
-                    if (kafkaProcessor.Enqueue(kafkaMessage) is false)
+                    if (kafkaProcessor.Enqueue(notNull) is false)
                     {
                         return;
                     }
