@@ -190,10 +190,6 @@ public partial class KafkaClient
                 {
                     _ = consumeCompletionSource.TrySetException(ex);
                 }
-                finally
-                {
-                    _ = consumeCompletionSource.TrySetResult();
-                }
             });
 
         consumerTask.Start();
