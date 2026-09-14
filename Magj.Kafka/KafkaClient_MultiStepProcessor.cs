@@ -8,8 +8,6 @@ using Confluent.Kafka;
 
 public partial class KafkaClient
 {
-    private sealed class Done() { public static readonly Done Instance = new(); }
-
     private readonly struct StepMessage<TStepResult>(object? doneOrExceptionOrKafkaMessage, TStepResult stepResult)
     {
         public readonly object? DoneOrExceptionOrKafkaMessage = doneOrExceptionOrKafkaMessage;
@@ -38,8 +36,8 @@ public partial class KafkaClient
             TaskCompletionSource retireCompletionSource,
             CancellationToken cancellationToken)
         {
-            readBlock = CreateReadBlock(read, settings.ReadSettings, cancellationToken);
-            var executeBlock = CreateExecuteBlock(execute, settings.ExecuteSettings, cancellationToken);
+            readBlock = CreateReadBlock(retireCompletionSource, read, settings.ReadSettings, cancellationToken);
+            var executeBlock = CreateExecuteBlock(retireCompletionSource, execute, settings.ExecuteSettings, cancellationToken);
             var retireBlock = CreateRetireBlock(retireCompletionSource, retire, consumer, settings.RetireSettings, cancellationToken);
 
             var readExecuteLink = readBlock.LinkTo(
@@ -59,6 +57,7 @@ public partial class KafkaClient
             => new(new ArgumentOutOfRangeException(nameof(message), message, "Unexpected message."), default!);
 
         private static TransformBlock<object, StepMessage<TRead>> CreateReadBlock(
+            TaskCompletionSource retireCompletionSource,
             Func<ConsumeResult<TKafkaKey, TKafkaValue>, CancellationToken, ValueTask<TRead>> read,
             AtLeastOnceStepSettings settings,
             CancellationToken cancellationToken)
@@ -67,12 +66,16 @@ public partial class KafkaClient
                 {
                     try
                     {
-                        return fromKafka switch
+                        return (retireCompletionSource, fromKafka) switch
                         {
-                            ConsumeResult<TKafkaKey, TKafkaValue> kafkaMessage => new StepMessage<TRead>(kafkaMessage, await read(kafkaMessage, cancellationToken)),
-                            Done done => new StepMessage<TRead>(done, default!),
-                            Exception exception => new StepMessage<TRead>(exception, default!),
-                            var unexpected => UnexpectedMessage<TRead>(unexpected),
+                            ({ Task.IsCompleted: true }, _)
+                                => default,
+                            (_, ConsumeResult<TKafkaKey, TKafkaValue> kafkaMessage)
+                                => new StepMessage<TRead>(kafkaMessage, await read(kafkaMessage, cancellationToken)),
+                            (_, Exception exception)
+                                => new StepMessage<TRead>(exception, default!),
+                            var unexpected
+                                => UnexpectedMessage<TRead>(unexpected),
                         };
                     }
                     catch (Exception ex)
@@ -89,6 +92,7 @@ public partial class KafkaClient
                 });
 
         private static TransformBlock<StepMessage<TRead>, StepMessage<TExecute>> CreateExecuteBlock(
+            TaskCompletionSource retireCompletionSource,
             Func<ConsumeResult<TKafkaKey, TKafkaValue>, TRead, CancellationToken, ValueTask<TExecute>> execute,
             AtLeastOnceStepSettings settings,
             CancellationToken cancellationToken)
@@ -97,15 +101,15 @@ public partial class KafkaClient
                 {
                     try
                     {
-                        return fromRead switch
+                        return (retireCompletionSource, fromRead) switch
                         {
-                            { DoneOrExceptionOrKafkaMessage: ConsumeResult<TKafkaKey, TKafkaValue> kafkaMessage, StepResult: var read }
+                            ({ Task.IsCompleted: true }, _)
+                                => default,
+                            (_, { DoneOrExceptionOrKafkaMessage: ConsumeResult<TKafkaKey, TKafkaValue> kafkaMessage, StepResult: var read })
                                 => new StepMessage<TExecute>(kafkaMessage, await execute(kafkaMessage, read, cancellationToken)),
-                            { DoneOrExceptionOrKafkaMessage: Done done }
-                                => new StepMessage<TExecute>(done, default!),
-                            { DoneOrExceptionOrKafkaMessage: Exception exception }
+                            (_, { DoneOrExceptionOrKafkaMessage: Exception exception })
                                 => new StepMessage<TExecute>(exception, default!),
-                            var unexpected
+                            (_, var unexpected)
                                 => UnexpectedMessage<TExecute>(unexpected),
                         };
                     }
@@ -133,21 +137,15 @@ public partial class KafkaClient
                 {
                     try
                     {
-                        if (retireCompletionSource.Task.IsCompleted)
+                        switch ((retireCompletionSource, fromExecute))
                         {
-                            return;
-                        }
-
-                        switch (fromExecute)
-                        {
-                            case { DoneOrExceptionOrKafkaMessage: ConsumeResult<TKafkaKey, TKafkaValue> kafkaMessage, StepResult: var execute }:
+                            case ({ Task.IsCompleted: true }, _):
+                                break;
+                            case (_, { DoneOrExceptionOrKafkaMessage: ConsumeResult<TKafkaKey, TKafkaValue> kafkaMessage, StepResult: var execute }):
                                 await retire(kafkaMessage, execute, cancellationToken);
                                 consumer.StoreOffset(kafkaMessage);
                                 break;
-                            case { DoneOrExceptionOrKafkaMessage: Done }:
-                                _ = retireCompletionSource.TrySetResult();
-                                break;
-                            case { DoneOrExceptionOrKafkaMessage: Exception exception }:
+                            case (_, { DoneOrExceptionOrKafkaMessage: Exception exception }):
                                 _ = retireCompletionSource.TrySetException(exception);
                                 break;
                             default:

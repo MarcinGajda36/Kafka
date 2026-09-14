@@ -91,6 +91,8 @@ public partial class KafkaClient
     /// <summary>
     /// At-least-once delivery guarantees no message is lost, but duplicates may occur during failures.
     /// Allows for different steps to happen concurrently with their own MaxDegreeOfParallelism.
+    /// To preserve order where all changes caused by message are externally visible in the order of consumption
+    /// then all side-effects, like saving to database, should happen on <paramref name="retire"/> step.
     /// </summary>
     /// <typeparam name="TKafkaKey">The Kafka message Key.</typeparam>
     /// <typeparam name="TKafkaValue">The Kafka message Value.</typeparam>
@@ -98,8 +100,7 @@ public partial class KafkaClient
     /// <param name="read">First operation to do on each kafka message.</param>
     /// <param name="execute">Second operation to do on each kafka message.</param>
     /// <param name="retire">
-    /// Final operation to do on each kafka message. 
-    /// To preserve order all side-effects, like saving to database, should happen here.
+    /// Final operation to do on each kafka message.
     /// Triggers in exact same order as messages arrived from kafka with MaxDegreeOfParallelism set to 1.
     /// </param>
     /// <param name="consumerConfigOptions">
@@ -160,18 +161,24 @@ public partial class KafkaClient
     {
         using var cancellationSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         cancellationToken = cancellationSource.Token;
+        var retireCompletionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var consumeCompletionSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        await using var registerCancelation = cancellationToken.Register(static (state, cancellationToken) => ((TaskCompletionSource)state!).TrySetCanceled(cancellationToken), consumeCompletionSource);
+        await using var completionSourceCancellations = cancellationToken.Register((state, cancellationToken) =>
+        {
+            _ = retireCompletionSource.TrySetCanceled(cancellationToken);
+            _ = consumeCompletionSource.TrySetCanceled(cancellationToken);
+        },
+        null);
         using var kafkaProcessor = new MultiStepProcessor<TKafkaKey, TKafkaValue, TRead, TExecute>(
             consumer,
             read,
             execute,
             retire,
             settings,
-            consumeCompletionSource,
+            retireCompletionSource,
             cancellationToken);
 
-        var consumerTask = new Thread(
+        var kafkaConsumerTask = Task.Factory.StartNew(
             () =>
             {
                 try
@@ -179,59 +186,40 @@ public partial class KafkaClient
                     consumer.Subscribe(settings.Topic);
                     try
                     {
-                        ConsumeAndMultiStepProcess(consumer, kafkaProcessor, settings.ConsumeTimeout, cancellationToken);
+                        while (cancellationToken is { IsCancellationRequested: false })
+                        {
+                            var kafkaMessage = consumer.Consume(settings.ConsumeTimeout);
+                            if (kafkaMessage is { } notNull)
+                            {
+                                if (kafkaProcessor.Enqueue(notNull) is false)
+                                {
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception exception)
+                    {
+                        _ = consumeCompletionSource.TrySetException(exception);
                     }
                     finally
                     {
                         consumer.Close();
                     }
                 }
-                catch (Exception ex)
+                catch (Exception exception)
                 {
-                    _ = consumeCompletionSource.TrySetException(ex);
+                    _ = consumeCompletionSource.TrySetException(exception);
                 }
-            });
+            },
+            cancellationToken,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default);
 
-        consumerTask.Start();
-        try
-        {
-            await consumeCompletionSource.Task;
-        }
-        finally
-        {
-            await cancellationSource.CancelAsync().ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-            await kafkaProcessor.Completion.ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
-            consumerTask.Join();
-        }
-    }
-
-    private static void ConsumeAndMultiStepProcess<TKafkaKey, TKafkaValue, TRead, TExecute>(
-        IConsumer<TKafkaKey, TKafkaValue> consumer,
-        MultiStepProcessor<TKafkaKey, TKafkaValue, TRead, TExecute> kafkaProcessor,
-        TimeSpan consumeTimeout,
-        CancellationToken cancellationToken)
-    {
-        try
-        {
-            while (cancellationToken.IsCancellationRequested is false)
-            {
-                var kafkaMessage = consumer.Consume(consumeTimeout);
-                if (kafkaMessage is { } notNull)
-                {
-                    if (kafkaProcessor.Enqueue(notNull) is false)
-                    {
-                        return;
-                    }
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            _ = kafkaProcessor.Enqueue(ex);
-        }
-        finally
-        {
-            _ = kafkaProcessor.Enqueue(Done.Instance);
-        }
+        var kafkaConsumerCompletionTask = consumeCompletionSource.Task;
+        var kafkaProcessorRetireTask = retireCompletionSource.Task;
+        var firstToFinish = await Task.WhenAny(kafkaConsumerCompletionTask, kafkaProcessorRetireTask);
+        await cancellationSource.CancelAsync().ConfigureAwait(ConfigureAwaitOptions.SuppressThrowing);
+        await Task.WhenAll(firstToFinish, kafkaConsumerCompletionTask, kafkaProcessorRetireTask, kafkaConsumerTask, kafkaProcessor.Completion);
     }
 }
