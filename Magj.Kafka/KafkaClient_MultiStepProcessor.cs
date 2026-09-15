@@ -74,13 +74,13 @@ public partial class KafkaClient
                                 => new StepMessage<TRead>(kafkaMessage, await read(kafkaMessage, cancellationToken)),
                             (_, Exception exception)
                                 => new StepMessage<TRead>(exception, default!),
-                            var unexpected
+                            (_, var unexpected)
                                 => UnexpectedMessage<TRead>(unexpected),
                         };
                     }
-                    catch (Exception ex)
+                    catch (Exception exception)
                     {
-                        return new StepMessage<TRead>(ex, default!);
+                        return new StepMessage<TRead>(exception, default!);
                     }
                 },
                 new ExecutionDataflowBlockOptions
@@ -113,9 +113,9 @@ public partial class KafkaClient
                                 => UnexpectedMessage<TExecute>(unexpected),
                         };
                     }
-                    catch (Exception ex)
+                    catch (Exception exception)
                     {
-                        return new StepMessage<TExecute>(ex, default!);
+                        return new StepMessage<TExecute>(exception, default!);
                     }
                 },
                 new ExecutionDataflowBlockOptions
@@ -145,11 +145,11 @@ public partial class KafkaClient
                                 await retire(kafkaMessage, execute, cancellationToken);
                                 consumer.StoreOffset(kafkaMessage);
                                 break;
-                            case (_, { DoneOrExceptionOrKafkaMessage: Exception exception }):
-                                _ = retireCompletionSource.TrySetException(exception);
+                            case (var completionSource, { DoneOrExceptionOrKafkaMessage: Exception exception }):
+                                _ = completionSource.TrySetException(exception);
                                 break;
-                            default:
-                                _ = retireCompletionSource.TrySetException(new ArgumentOutOfRangeException(nameof(fromExecute), fromExecute, "Unexpected message."));
+                            case (var completionSource, var unexpected):
+                                _ = completionSource.TrySetException(new ArgumentOutOfRangeException(nameof(fromExecute), unexpected, "Unexpected message."));
                                 break;
                         }
                     }
