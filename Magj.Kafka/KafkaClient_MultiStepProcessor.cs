@@ -137,7 +137,7 @@ public partial class KafkaClient
                 {
                     try
                     {
-                        switch ((retireCompletionSource, fromExecute))
+                        switch (retireCompletionSource, fromExecute)
                         {
                             case ({ Task.IsCompleted: true }, _):
                                 break;
