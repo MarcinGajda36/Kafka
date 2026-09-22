@@ -115,7 +115,7 @@ public static partial class KafkaClient
     public static Task AtLeastOnceAsync<TKey, TValue>(
         AtLeastOnceSettings settings,
         Func<ConsumeResult<TKey, TValue>, CancellationToken, ValueTask> processor,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken)
         => AtLeastOnceAsync(settings, processor, null, null, cancellationToken);
 
     private static async Task AtLeastOnceCore<TKey, TValue>(
