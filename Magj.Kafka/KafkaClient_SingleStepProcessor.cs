@@ -50,11 +50,7 @@ public partial class KafkaClient
                     }
                     catch (Exception ex)
                     {
-                        settings.Logger.LogError(
-                            ex,
-                            "Unhandled exception during processing from topic: {Topic}, groupId: {GroupId}. Closing processing.",
-                            settings.Topic,
-                            settings.GroupId);
+                        _processingError(settings.Logger, settings.Topic, settings.GroupId, ex);
                         throw;
                     }
                 },
@@ -69,10 +65,7 @@ public partial class KafkaClient
         private static ActionBlock<ConsumeResult<TKey, TValue>> CreateOffsetBlock(
             IConsumer<TKey, TValue> consumer,
             AtLeastOnceSettings settings)
-        {
-            var logger = settings.Logger;
-            object?[] loggerParams = [settings.Topic, settings.GroupId];
-            return new(
+            => new(
                 result =>
                 {
                     try
@@ -84,18 +77,12 @@ public partial class KafkaClient
                         // https://github.com/edenhill/librdkafka/blob/master/INTRODUCTION.md#fatal-consumer-errors
                         if (ex.Error.IsFatal)
                         {
-                            logger.LogError(
-                                ex,
-                                "Fatal exception during StoreOffset from topic: {Topic}, groupId: {GroupId}. Closing consumption.",
-                                loggerParams);
+                            _fatalStoreOffsetError(settings.Logger, settings.Topic, settings.GroupId, ex);
                             throw;
                         }
                         else
                         {
-                            logger.LogWarning(
-                                ex,
-                                "Non fatal exception during StoreOffset from topic: {Topic}, groupId: {GroupId}. Continuing.",
-                                loggerParams);
+                            _nonFatalStoreOffsetWarning(settings.Logger, settings.Topic, settings.GroupId, ex);
                         }
                     }
                 },
@@ -105,9 +92,26 @@ public partial class KafkaClient
                     TaskScheduler = settings.ConsumerScheduler,
                     SingleProducerConstrained = true,
                 });
-        }
 
         public void Dispose()
             => processingOffsetLink.Dispose();
+
+        private static readonly Action<ILogger, string, string, Exception?> _processingError =
+            LoggerMessage.Define<string, string>(
+                LogLevel.Error,
+                new EventId(5, nameof(_processingError)),
+                "Unhandled exception during processing from topic: {Topic}, groupId: {GroupId}. Closing processing.");
+
+        private static readonly Action<ILogger, string, string, Exception?> _fatalStoreOffsetError =
+            LoggerMessage.Define<string, string>(
+                LogLevel.Error,
+                new EventId(6, nameof(_fatalStoreOffsetError)),
+                "Fatal exception during StoreOffset from topic: {Topic}, groupId: {GroupId}. Closing consumption.");
+
+        private static readonly Action<ILogger, string, string, Exception?> _nonFatalStoreOffsetWarning =
+            LoggerMessage.Define<string, string>(
+                LogLevel.Warning,
+                new EventId(7, nameof(_nonFatalStoreOffsetWarning)),
+                "Non fatal exception during StoreOffset from topic: {Topic}, groupId: {GroupId}. Continuing.");
     }
 }
