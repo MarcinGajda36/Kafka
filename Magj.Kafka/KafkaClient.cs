@@ -71,6 +71,30 @@ public sealed record AtLeastOnceSettings(
 
 public static partial class KafkaClient
 {
+    private static readonly Action<ILogger, string, string, Exception?> _logFatalConsumeError =
+        LoggerMessage.Define<string, string>(
+            LogLevel.Error,
+            new EventId(1, nameof(_logFatalConsumeError)),
+            "Fatal exception during consuming from topic: {Topic}, groupId: {GroupId}. Closing consumption.");
+
+    private static readonly Action<ILogger, string, string, Exception?> _logNonFatalConsumeWarning =
+        LoggerMessage.Define<string, string>(
+            LogLevel.Warning,
+            new EventId(2, nameof(_logNonFatalConsumeWarning)),
+            "Non fatal exception during consuming from topic: {Topic}, groupId: {GroupId}. Trying again.");
+
+    private static readonly Action<ILogger, string, string, Exception?> _logConsumeCanceledInfo =
+        LoggerMessage.Define<string, string>(
+            LogLevel.Information,
+            new EventId(3, nameof(_logConsumeCanceledInfo)),
+            "Canceled exception during consuming from topic: {Topic}, groupId: {GroupId}. Closing consumption.");
+
+    private static readonly Action<ILogger, string, string, Exception?> _logUnknownConsumeError =
+        LoggerMessage.Define<string, string>(
+            LogLevel.Error,
+            new EventId(4, nameof(_logUnknownConsumeError)),
+            "Unknown exception during consuming from topic: {Topic}, groupId: {GroupId}. Closing consumption.");
+
     /// <summary>
     /// At-least-once delivery guarantees no message is lost, but duplicates may occur during failures.
     /// </summary>
@@ -184,8 +208,6 @@ public static partial class KafkaClient
         AtLeastOnceSettings settings,
         CancellationToken cancellationToken)
     {
-        var logger = settings.Logger;
-        object?[] loggerParams = [settings.Topic, settings.GroupId];
         while (cancellationToken.IsCancellationRequested is false)
         {
             try
@@ -201,39 +223,26 @@ public static partial class KafkaClient
             }
             catch (ConsumeException ex)
             {
-                // https://github.com/edenhill/librdkafka/blob/master/INTRODUCTION.md#fatal-consumer-errors
                 if (ex.Error.IsFatal)
                 {
-                    logger.LogError(
-                        ex,
-                        "Fatal exception during consuming from topic: {Topic}, groupId: {GroupId}. Closing consumption.",
-                        loggerParams);
+                    _logFatalConsumeError(settings.Logger, settings.Topic, settings.GroupId, ex);
                     kafkaProcessor.Complete();
                     throw;
                 }
                 else
                 {
-                    logger.LogWarning(
-                        ex,
-                        "Non fatal exception during consuming from topic: {Topic}, groupId: {GroupId}. Trying again.",
-                        loggerParams);
+                    _logNonFatalConsumeWarning(settings.Logger, settings.Topic, settings.GroupId, ex);
                 }
             }
             catch (OperationCanceledException ex)
             {
-                logger.LogInformation(
-                    ex,
-                    "Canceled exception during consuming from topic: {Topic}, groupId: {GroupId}. Closing consumption.",
-                    loggerParams);
+                _logConsumeCanceledInfo(settings.Logger, settings.Topic, settings.GroupId, ex);
                 kafkaProcessor.Complete();
                 throw;
             }
             catch (Exception ex)
             {
-                logger.LogError(
-                    ex,
-                    "Unknown exception during consuming from topic: {Topic}, groupId: {GroupId}. Closing consumption.",
-                    loggerParams);
+                _logUnknownConsumeError(settings.Logger, settings.Topic, settings.GroupId, ex);
                 kafkaProcessor.Complete();
                 throw;
             }

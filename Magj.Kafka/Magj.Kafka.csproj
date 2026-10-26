@@ -16,6 +16,7 @@
 		<Version>2.1.1</Version>
 		<Copyright>MIT</Copyright>
 		<PackageProjectUrl>https://github.com/MarcinGajda36/Kafka</PackageProjectUrl>
+		<AnalysisLevel>latest-recommended</AnalysisLevel>
 	</PropertyGroup>
 
 	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
